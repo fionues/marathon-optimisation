@@ -31,11 +31,16 @@ WEEKDAYS   = [0, 1, 2, 3, 4]   # Mon–Fri
 WEEKEND    = [5, 6]             # Sat, Sun
 
 # ─── Constraint parameters ───────────────────────────────────────────────────
-MAX_WEEKDAY_LOAD  = 12.0   # km × intensity  (constraint 1)
+MAX_WEEKDAY_LOAD  = 35.0   # km × intensity  (constraint 1)
 MAX_WEEKEND_LOAD  = 35.0   # long run hard cap per weekend day
 MIN_REST_PER_WEEK = 1      # at least 1 rest day  (constraint 2)
 TEN_PERCENT_RULE  = 1.10   # week-over-week volume cap  (constraint 3)
 INITIAL_WEEKLY_KM = 40.0   # realistic starting volume for non-novice
+
+# ─── long run constraints ────────────────────────────────────────────────
+MAX_LONG_RUN      = 35.0   # hard cap for the one long run
+MAX_RECOVERY_RUN  = 15.0   # cap for the second weekend day (recovery run)
+LONG_RUN_THRESHOLD = 18.0  # anything above this counts as a "long run"
 
 # ─── SA hyper-parameters ─────────────────────────────────────────────────────
 T_INIT      = 5.0
@@ -120,6 +125,22 @@ def penalty(W: np.ndarray) -> float:
     neg_mask = W < 0
     p += 1000.0 * (-W[neg_mask]).sum()
 
+    # ── Constraint 5: exactly 1 long run per week ─────────────────────────
+    # Count days exceeding the long-run threshold
+    long_run_days = np.sum(week > LONG_RUN_THRESHOLD)
+    if long_run_days > 1:
+        p += 800.0 * (long_run_days - 1)   # penalise every extra long day
+    if long_run_days < 1 and n < 13:        # must have one (except taper)
+        p += 400.0
+
+    # ── Constraint 6: second weekend day is a recovery run ────────────────
+    sat, sun = week[5], week[6]
+    # The shorter of the two weekend days must stay under MAX_RECOVERY_RUN
+    recovery_day_load = min(sat, sun)
+    excess = recovery_day_load - MAX_RECOVERY_RUN
+    if excess > 0:
+        p += 600.0 * excess
+
     return p
 
 
@@ -188,6 +209,11 @@ def neighbour(W: np.ndarray, rng: np.random.Generator) -> np.ndarray:
         # Re-clip weekday constraint
         if d in WEEKDAYS:
             W_new[n, d] = min(W_new[n, d], MAX_WEEKDAY_LOAD)
+        # clip the shorter weekend day to recovery cap
+        if d in WEEKEND:
+            sat, sun = W_new[n, 5], W_new[n, 6]
+            shorter_day = 5 if sat <= sun else 6
+            W_new[n, shorter_day] = min(W_new[n, shorter_day], MAX_RECOVERY_RUN)
 
     elif move == 'shift':
         # Move load from one day to another within same week
@@ -389,6 +415,16 @@ def verify_constraints(W: np.ndarray):
     if np.any(W < -1e-6):
         print("  ❌ C4 violated: negative loads found")
         all_ok = False
+
+    # C5 & C6: long run structure
+        long_days = np.sum(week > LONG_RUN_THRESHOLD)
+        if long_days != 1 and n < 13:
+            print(f"  ❌ C5 violated  week {n+1}: {long_days} long run(s) found")
+            all_ok = False
+        recovery = min(week[5], week[6])
+        if recovery > MAX_RECOVERY_RUN + 1e-6:
+            print(f"  ❌ C6 violated  week {n+1}: recovery run = {recovery:.1f} km")
+            all_ok = False
 
     if all_ok:
         print("  ✅ All constraints satisfied.")
