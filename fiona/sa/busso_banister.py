@@ -19,7 +19,7 @@ State equations (discrete, daily):
   k1(t) = k1(t-1)*exp(-1/τ3) + k̄1*w(t)     # variable gain (adapts to load)
 
 Where:
-  w(t)  = training load on day t (TRIMP or arbitrary units)
+  w(t)  = training load on day t (TRIMP or arbitrary units) -> km
   τ1    = fitness time constant        (~45 days)
   τ2    = fatigue time constant        (~15 days)
   τ3    = gain adaptation time constant (~38 days, Busso 2003)
@@ -48,7 +48,7 @@ import math, random
 # ─────────────────────────────────────────────
 @dataclass
 class BussoParams:
-    p0:   float = 50.0   # baseline performance (AU)
+    p0:   float = 50.0   # baseline performance (AU) -> au: arbitrary units. normalized to 100, so 50 means "halfway to peak performance"
     k1b:  float = 0.08   # baseline gain scaling factor (k̄1)
     k2:   float = 1.8    # fatigue gain factor (fixed)
     tau1: float = 45.0   # fitness time constant (days)
@@ -109,6 +109,14 @@ def simulate_busso(loads: np.ndarray,
 
     return perf, g, h, k1
 
+R_MAX = 20.0  # maximum injury risk (arbitrary units)
+W_MAX = 80.0  # maximum weekly load (arbitrary units) or max daily load: 25.0
+
+def c_injury_risk(x):
+    """C1 — Global injury risk cap (quadratic): Σ(w/W_MAX)² ≤ R_MAX."""
+    return R_MAX - np.sum((x / W_MAX) ** 2)
+
+# -> show outcomes of different constraint formulations
 
 # ─────────────────────────────────────────────
 # 3.  OBJECTIVE FUNCTION
@@ -116,9 +124,9 @@ def simulate_busso(loads: np.ndarray,
 def objective(loads: np.ndarray,
               params: BussoParams,
               race_day: int,
-              max_daily_load:    float = 20.0,
+              max_daily_load:    float = 32.0,
               max_weekly_load:   float = 80.0,
-              start_weekly_load: float = 28.0,
+              start_weekly_load: float = 10.0,
               max_weekly_increase: float = 0.10) -> float:
     """
     Maximise predicted race-day performance subject to physiological
@@ -138,18 +146,18 @@ def objective(loads: np.ndarray,
     over_weekly = np.maximum(0, weekly - max_weekly_load)
     score -= 20.0 * np.sum(over_weekly ** 2)
 
-    # # ── P3: anchor week-1 volume to a realistic starting point
-    # score -= 40.0 * (weekly[0] - start_weekly_load) ** 2
+    # -> use the 10% weekly increase constraint to implicitly enforce a realistic starting point, so we can ignore the explicit week-1 anchor penalty
+    # -> or better use the injury risk penalty to enforce a realistic starting volume
 
-    # # ── P4: progressive overload — enforce ≤10% increase AND
-    # #        penalise premature volume drops (outside taper window)
-    # for w in range(1, n_weeks):
-    #     if weekly[w-1] > 1e-3:
-    #         change = (weekly[w] - weekly[w-1]) / weekly[w-1]
-    #         if change > max_weekly_increase:
-    #             score -= 80.0 * (change - max_weekly_increase) ** 2
-    #         elif change < -max_weekly_increase and w < n_weeks - 2:
-    #             score -= 40.0 * (change + max_weekly_increase) ** 2
+    # # ── P3: anchor week-1 volume to a realistic starting point
+    # score -= 40.0 * (weekly[0] - start_weekly_load) ** 2 # for each week -> add 10% constraint
+
+    # ── P4: progressive overload — enforce ≤10% increase
+    for w in range(1, n_weeks):
+        if weekly[w-1] > 1e-3:
+            change = (weekly[w] - weekly[w-1]) / weekly[w-1]
+            if change > max_weekly_increase:
+                score -= 80.0 * (change - max_weekly_increase) ** 2
 
     # # ── P5: taper — meaningful reduction in final 2 weeks
     # taper_ratio = weekly[-1] / (weekly[-2] + 1e-9)
@@ -171,11 +179,13 @@ def _initial_plan(n_days: int, max_load: float,
     loads = np.zeros(n_days)
     n_weeks = n_days // 7
     day_pattern = np.array([0.18, 0.15, 0.20, 0.15, 0.18, 0.14, 0.0])
+    # day_pattern = np.array([0.16, 0.16, 0.16, 0.16, 0.16, 0.20, 0.0])
     for w in range(n_weeks):
-        if w < 12:
-            frac = start_fraction + (0.85 - start_fraction) * (w / 11)
-        else:
-            frac = 0.85 * max(0.40, 1 - (w - 11) * 0.22)
+        frac = start_fraction + (0.85 - start_fraction) * (w / 11)
+        # if w < 12:
+        #     frac = start_fraction + (0.85 - start_fraction) * (w / 11)
+        # else:
+        #     frac = 0.85 * max(0.40, 1 - (w - 11) * 0.22)
         loads[w*7:(w+1)*7] = max_load * frac * day_pattern
     return loads
 
