@@ -11,12 +11,12 @@ from scipy.optimize import differential_evolution
 # ─────────────────────────────────────────────
 @dataclass
 class BussoParams:
-    p0:   float = 50.0    # baseline performance (AU) -> AU: arbitrary units, normalized to 100, so 50 means "halfway to peak performance"
-    k1:   float = 0.1     # fitness gain factor (fixed, the magnitude of fitness gained by a unit of training) TODO: re-check number - depends on the athlete
-    k3:   float = 0.0005  # fatigue sensitivity multiplier (drives dynamic k2: the magnitude of fatigue incurred by a unit of training) TODO: re-check number - depends on the athlete
+    p0:   float = 0    # baseline performance (AU) -> AU: arbitrary units
+    k1:   float = 1     # fitness gain factor (fixed, the magnitude of fitness gained by a unit of training) TODO: re-check number - depends on the athlete
+    k3:   float = 0.05  # fatigue sensitivity multiplier (drives dynamic k2: the magnitude of fatigue incurred by a unit of training) TODO: re-check number - depends on the athlete
     tau1: float = 45.0    # fitness decay constant (days)
     tau2: float = 15.0    # fatigue decay constant (days)
-    tau3: float = 38.0    # fatigue sensitivity decay constant (days)
+    tau3: float = 5    # fatigue sensitivity decay constant (days)
 
 # ─────────────────────────────────────────────
 # 2.  BUSSO VDR (Variable Dose-Response) MODEL: as training accumulates, the body becomes more susceptible to *fatigue*
@@ -47,9 +47,9 @@ def simulate_busso(loads: np.ndarray,
 
     d1 = math.exp(-1.0 / params.tau1) # fitness decay factor: every day, the athlete retains 97.8% of their fitness from the day before
     d2 = math.exp(-1.0 / params.tau2) # fatigue decay factor: the athlete retains 93.5% of yesterday's fatigue
-    d3 = math.exp(-1.0 / params.tau3) # every day, the athlete retains 97.4% of their compounding fatigue sensitivity from the day before
+    d3 = math.exp(-1.0 / params.tau3) # every day, the athlete retains 97.4% of their compounding fatigue sensitivity from the day before TODO check
 
-    k2_prev = 0.0 # Fatigue sensitivity starts at 0
+    k2_prev = 0.0 # Fatigue sensitivity starts at 0 TODO check
     g_prev  = 0.0
     h_prev  = 0.0
 
@@ -235,7 +235,7 @@ def apply_all_constraints(loads: np.ndarray) -> np.ndarray:
     if loads[max_day_idx] < 32.0:
         loads[max_day_idx] = 32.0
 
-    # No tiny runs (under 5 km)
+    # No tiny runs (under 5 km) TODO except for last two weeks
     small_run_mask = (loads > 0) & (loads < 5.0)
     snap_to_zero = small_run_mask & (loads < 2.5)
     loads[snap_to_zero] = 0.0
@@ -266,7 +266,7 @@ def de_objective(raw_loads: np.ndarray) -> float:
     return -perf[-1]
 
 # Set bounds for the optimizer: "search space" for each day
-bounds = [(0, 32) for _ in range(n_days)]
+bounds = [(0, 32) for _ in range(n_days)] # TODO check again why
 
 result = differential_evolution(
     de_objective,
@@ -274,7 +274,7 @@ result = differential_evolution(
     strategy='best1bin',
     maxiter=1000,      # Maximum generations
     popsize=15,        # Multiplier for population size (15 * 112 days = 1680 individuals)
-    tol=0.01,          # Convergence tolerance
+    tol=0.01,         # Convergence tolerance TODO for report: explore different tol
     disp=True          # Print progress to console
 )
 
@@ -282,6 +282,8 @@ result = differential_evolution(
 # to get the final, usable training schedule.
 optimal_loads = apply_all_constraints(result.x)
 final_perf, final_g, final_h, final_k2 = simulate_busso(optimal_loads, params_busso)
+
+# TODO: round the numbers at this stage
 
 print(f"Final Race-Day Performance: {final_perf[-1]:.2f} AU")
 
