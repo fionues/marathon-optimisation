@@ -248,28 +248,21 @@ constraint_report("Hard constraints (repair)",   loads_hard)
 constraint_report("Penalty constraints",         loads_penalty)
 print("=" * 55)
 
-print(f'Iterations hard: {res_hard.nit}')
-print(f'Function evaluations hard: {res_hard.nfev}')
-print(f'Iterations penalty: {res_penalty.nit}')
-print(f'Function evaluations penalty: {res_penalty.nfev}')
-
 # Point downstream plotting/printing at whichever result you want to inspect.
 # Change this flag to 'penalty' to switch.
-# INSPECT = 'hard'   # 'hard' | 'penalty'
+INSPECT = 'hard'   # 'hard' | 'penalty'
 
-# optimal_loads = loads_hard    if INSPECT == 'hard' else loads_penalty
-# final_perf    = perf_hard     if INSPECT == 'hard' else perf_penalty
-# final_g       = g_hard        if INSPECT == 'hard' else g_penalty
-# final_h       = h_hard        if INSPECT == 'hard' else h_penalty
-# final_k2      = k2_hard       if INSPECT == 'hard' else k2_penalty
+optimal_loads = loads_hard    if INSPECT == 'hard' else loads_penalty
+final_perf    = perf_hard     if INSPECT == 'hard' else perf_penalty
+final_g       = g_hard        if INSPECT == 'hard' else g_penalty
+final_h       = h_hard        if INSPECT == 'hard' else h_penalty
+final_k2      = k2_hard       if INSPECT == 'hard' else k2_penalty
 
 # ─────────────────────────────────────────────
 # 5. VISUALIZE Results
 # ─────────────────────────────────────────────
-import os
-script_dir = os.path.dirname(os.path.abspath(__file__))
 
-def plot_performance_dynamics(loads, perf, g, h, k2, INSPECT):
+def plot_performance_dynamics(loads, perf, g, h, k2):
     days = np.arange(len(loads))
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
 
@@ -300,7 +293,7 @@ def plot_performance_dynamics(loads, perf, g, h, k2, INSPECT):
     ax3.grid(alpha=0.3)
 
     plt.tight_layout()
-    # plt.show()
+    plt.show()
 
 
 def plot_weekly_volume(loads):
@@ -325,7 +318,7 @@ def plot_weekly_volume(loads):
                  arrowprops=dict(facecolor='black', shrink=0.05), ha='center')
 
     plt.tight_layout()
-    # plt.show()
+    plt.show()
 
 def print_weekly_summary(loads):
     print("\n" + "=" * 45)
@@ -358,21 +351,8 @@ def print_detailed_summary(loads):
     print("=" * 65)
     print(f"TOTAL PLAN DISTANCE: {loads.sum():.1f} km")
 
-def print_and_show_plots():
-    # plt.savefig(os.path.join(script_dir, "simulated_annealing.png"), dpi=150, bbox_inches='tight')
-    plt.show()
+print_weekly_summary(optimal_loads)
+print_detailed_summary(optimal_loads)
 
-## plots hard constraints
-print_weekly_summary(loads_hard)
-print_detailed_summary(loads_hard)
-
-plot_performance_dynamics(loads_hard, perf_hard, g_hard, h_hard, k2_hard, 'hard')
-plot_weekly_volume(loads_hard)
-
-## plots penalty constraints
-print_weekly_summary(loads_penalty)
-print_detailed_summary(loads_penalty)
-plot_performance_dynamics(loads_penalty, perf_penalty, g_penalty, h_penalty, k2_penalty, 'penalty')
-plot_weekly_volume(loads_penalty)
-
-print_and_show_plots()
+plot_performance_dynamics(optimal_loads, final_perf, final_g, final_h, final_k2)
+plot_weekly_volume(optimal_loads)
