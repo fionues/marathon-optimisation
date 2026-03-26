@@ -300,10 +300,11 @@ def plot_performance_dynamics(loads, perf, g, h, k2, INSPECT):
     ax3.grid(alpha=0.3)
 
     plt.tight_layout()
+    plt.savefig(os.path.join(script_dir, f"simulated_annealing_performance_{INSPECT}.png"), dpi=150, bbox_inches='tight')
     # plt.show()
 
 
-def plot_weekly_volume(loads):
+def plot_weekly_volume(loads, INSPECT):
     n_weeks = len(loads) // 7
     weekly_totals = [loads[w * 7:(w + 1) * 7].sum() for w in range(n_weeks)]
 
@@ -312,7 +313,7 @@ def plot_weekly_volume(loads):
 
     plt.plot(range(1, n_weeks + 1), weekly_totals, color='darkred', marker='o', linestyle='--', linewidth=1)
 
-    plt.title('Total Weekly Training Volume')
+    plt.title(f'Total Weekly Training Volume ({INSPECT} constraints)')
     plt.xlabel('Week Number')
     plt.ylabel('Total Distance (km)')
     plt.xticks(range(1, n_weeks + 1))
@@ -325,6 +326,7 @@ def plot_weekly_volume(loads):
                  arrowprops=dict(facecolor='black', shrink=0.05), ha='center')
 
     plt.tight_layout()
+    plt.savefig(os.path.join(script_dir, f"simulated_annealing_weekly_volume_{INSPECT}.png"), dpi=150, bbox_inches='tight')
     # plt.show()
 
 def print_weekly_summary(loads):
@@ -359,7 +361,6 @@ def print_detailed_summary(loads):
     print(f"TOTAL PLAN DISTANCE: {loads.sum():.1f} km")
 
 def print_and_show_plots():
-    # plt.savefig(os.path.join(script_dir, "simulated_annealing.png"), dpi=150, bbox_inches='tight')
     plt.show()
 
 ## plots hard constraints
@@ -367,12 +368,12 @@ print_weekly_summary(loads_hard)
 print_detailed_summary(loads_hard)
 
 plot_performance_dynamics(loads_hard, perf_hard, g_hard, h_hard, k2_hard, 'hard')
-plot_weekly_volume(loads_hard)
+plot_weekly_volume(loads_hard, 'hard')
 
 ## plots penalty constraints
 print_weekly_summary(loads_penalty)
 print_detailed_summary(loads_penalty)
 plot_performance_dynamics(loads_penalty, perf_penalty, g_penalty, h_penalty, k2_penalty, 'penalty')
-plot_weekly_volume(loads_penalty)
+plot_weekly_volume(loads_penalty, 'penalty')
 
 print_and_show_plots()
