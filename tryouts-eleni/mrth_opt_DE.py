@@ -112,6 +112,24 @@ def apply_all_constraints(loads: np.ndarray) -> np.ndarray:
             scale = (prev_sum * 1.10) / curr_sum if curr_sum > 0 else 0
             loads[w*7 : (w+1)*7] *= scale
 
+    # Specific Taper Caps (Weeks 14, 15, 16)
+    wk13_sum = loads[12 * 7: 13 * 7].sum()
+
+    # Week 14: 20% lower than Week 13
+    wk14_slice = slice(13 * 7, 14 * 7)
+    if loads[wk14_slice].sum() > (wk13_sum * 0.80):
+        loads[wk14_slice] *= (wk13_sum * 0.80) / loads[wk14_slice].sum()
+
+    # Week 15: 40% lower than Week 13
+    wk15_slice = slice(14 * 7, 15 * 7)
+    if loads[wk15_slice].sum() > (wk13_sum * 0.60):
+        loads[wk15_slice] *= (wk13_sum * 0.60) / loads[wk15_slice].sum()
+
+    # Week 16: Race Week
+    wk16_slice = slice(15 * 7, 16 * 7 - 1)  # excluding race day
+    if loads[wk16_slice].sum() > (wk13_sum * 0.35):
+        loads[wk16_slice] *= (wk13_sum * 0.35) / loads[wk16_slice].sum()
+
     # At least one 32 km run (to prepare for the marathon specifically)
     # We find the day the optimizer already assigned the highest load, and boost it to 32 km
     # if it hasn't organically reached that distance.
