@@ -10,14 +10,22 @@ import math, random
 # ─────────────────────────────────────────────
 # 1.  MODEL PARAMETERS
 # ─────────────────────────────────────────────
+# @dataclass
+# class BussoParams:
+#     p0:   float = 0    # baseline performance (AU) -> AU: arbitrary units
+#     k1:   float = 1     # fitness gain factor (fixed, the magnitude of fitness gained by a unit of training) TODO: re-check number - depends on the athlete
+#     k3:   float = 0.05  # fatigue sensitivity multiplier (drives dynamic k2: the magnitude of fatigue incurred by a unit of training) TODO: re-check number - depends on the athlete
+#     tau1: float = 45.0    # fitness decay constant (days)
+#     tau2: float = 15.0    # fatigue decay constant (days)
+#     tau3: float = 5    # fatigue sensitivity decay constant (days)
 @dataclass
 class BussoParams:
     p0:   float = 0    # baseline performance (AU) -> AU: arbitrary units
-    k1:   float = 1     # fitness gain factor (fixed, the magnitude of fitness gained by a unit of training) TODO: re-check number - depends on the athlete
-    k3:   float = 0.05  # fatigue sensitivity multiplier (drives dynamic k2: the magnitude of fatigue incurred by a unit of training) TODO: re-check number - depends on the athlete
-    tau1: float = 45.0    # fitness decay constant (days)
-    tau2: float = 15.0    # fatigue decay constant (days)
-    tau3: float = 5    # fatigue sensitivity decay constant (days)
+    k1:   float = 0.031     # fitness gain factor (fixed, the magnitude of fitness gained by a unit of training) TODO: re-check number - depends on the athlete
+    k3:   float = 0.000035  # fatigue sensitivity multiplier (drives dynamic k2: the magnitude of fatigue incurred by a unit of training) TODO: re-check number - depends on the athlete
+    tau1: float = 30.8    # fitness decay constant (days)
+    tau2: float = 16.8    # fatigue decay constant (days)
+    tau3: float = 2.3    # fatigue sensitivity decay constant (days)
 
 # ─────────────────────────────────────────────
 # 2.  BUSSO VDR (Variable Dose-Response) MODEL: as training accumulates, the body becomes more susceptible to *fatigue*
@@ -133,6 +141,9 @@ def apply_all_constraints(loads: np.ndarray) -> np.ndarray:
     # No single run above MAX_RUN_KM
     loads = np.minimum(loads, MAX_RUN_KM)
 
+    # No load in the open interval (0, 5): snap to 0 if < 2.5, else to 5
+    loads = np.where((loads > 0) & (loads < 5), np.where(loads < 2.5, 0.0, 5.0), loads)
+
     # Race day
     loads[-1] = MARATHON_KM
 
@@ -188,36 +199,62 @@ def busso_objective_penalty(loads: np.ndarray) -> float:
     # Penalty 6: race day = MARATHON_KM
     penalty += (loads[-1] - MARATHON_KM) ** 2
 
+    # Penalty 7: tapering — last 2 weeks must reduce volume relative to peak
+    #   week n-2 must be ≤ 80 % of the peak non-taper week; week n-1 ≤ 60 %
+    if n_weeks >= 3:
+        peak_vol = max(loads[w*7:(w+1)*7].sum() for w in range(n_weeks - 2))
+        for taper_idx, taper_cap in enumerate([0.80, 0.60]):
+            w = n_weeks - 2 + taper_idx
+            week_sum = loads[w*7 : (w+1)*7].sum()
+            penalty += max(0, week_sum - taper_cap * peak_vol) ** 2
+
+    # Penalty 8: no load in the open interval (0, 5) — must be 0 or ≥ 5
+    #   penalise by the squared distance to the nearest feasible value
+    in_gap = (loads > 0) & (loads < 5)
+    penalty += np.sum(np.minimum(loads, 5 - loads)[in_gap] ** 2)
+
     return objective + PENALTY_WEIGHT * penalty
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN BOTH OPTIMISERS
 # ─────────────────────────────────────────────────────────────────────────────
-print("Running Dual Annealing — hard constraints …")
-res_hard = dual_annealing(
-    busso_objective_hard,
-    bounds=[(0, MAX_RUN_KM)] * n_days,
-    maxiter=1000,
-    seed=42,
-)
-res_hard.x = apply_all_constraints(res_hard.x)   # guarantee feasibility on output
+# print("Running Dual Annealing — hard constraints …")
+# res_hard = dual_annealing(
+#     busso_objective_hard,
+#     bounds=[(0, MAX_RUN_KM)] * n_days,
+#     maxiter=1000,
+#     seed=42,
+# )
+# res_hard.x = apply_all_constraints(res_hard.x)   # guarantee feasibility on output
 
 print("Running Dual Annealing — penalty constraints …")
+
+# Track convergence: record best objective value at each iteration
+_convergence_history: List[float] = []
+_best_so_far = [np.inf]
+
+def _sa_callback(x, f, context):
+    if f < _best_so_far[0]:
+        _best_so_far[0] = f
+    _convergence_history.append(_best_so_far[0])
+
+# there is no other stop mechanism than maxiter? So we needed to plot the convergence curve with a lot of iterations, to find that 100 is enough
 res_penalty = dual_annealing(
     busso_objective_penalty,
     bounds=[(0, MAX_RUN_KM)] * n_days,
-    maxiter=1000,
+    maxiter=100,
     seed=42,
+    callback=_sa_callback,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # COMPARISON SUMMARY
 # ─────────────────────────────────────────────────────────────────────────────
-loads_hard    = res_hard.x
+# loads_hard    = res_hard.x
 loads_penalty = res_penalty.x
 
-perf_hard,    g_hard,    h_hard,    k2_hard    = simulate_busso(loads_hard,    params_busso)
+# perf_hard,    g_hard,    h_hard,    k2_hard    = simulate_busso(loads_hard,    params_busso)
 perf_penalty, g_penalty, h_penalty, k2_penalty = simulate_busso(loads_penalty, params_busso)
 
 def constraint_report(label: str, loads: np.ndarray) -> None:
@@ -233,7 +270,7 @@ def constraint_report(label: str, loads: np.ndarray) -> None:
     week1_ok   = abs(loads[:7].sum() - FIRST_WEEK_KM) < 1.0
 
     print(f"\n  {label}")
-    print(f"    Race-day performance : {perf_hard[-1] if 'Hard' in label else perf_penalty[-1]:.4f} AU")
+    # print(f"    Race-day performance : {perf_hard[-1] if 'Hard' in label else perf_penalty[-1]:.4f} AU")
     print(f"    Total plan distance  : {loads.sum():.1f} km")
     print(f"    Rest day every week  : {'✓' if rest_ok  else '✗  VIOLATED'}")
     print(f"    ≤10% weekly ramp     : {'✓' if ramp_ok  else '✗  VIOLATED'}")
@@ -244,12 +281,12 @@ def constraint_report(label: str, loads: np.ndarray) -> None:
 print("\n" + "=" * 55)
 print("  CONSTRAINT APPROACH COMPARISON")
 print("=" * 55)
-constraint_report("Hard constraints (repair)",   loads_hard)
+# constraint_report("Hard constraints (repair)",   loads_hard)
 constraint_report("Penalty constraints",         loads_penalty)
 print("=" * 55)
 
-print(f'Iterations hard: {res_hard.nit}')
-print(f'Function evaluations hard: {res_hard.nfev}')
+# print(f'Iterations hard: {res_hard.nit}')
+# print(f'Function evaluations hard: {res_hard.nfev}')
 print(f'Iterations penalty: {res_penalty.nit}')
 print(f'Function evaluations penalty: {res_penalty.nfev}')
 
@@ -268,6 +305,8 @@ print(f'Function evaluations penalty: {res_penalty.nfev}')
 # ─────────────────────────────────────────────
 import os
 script_dir = os.path.dirname(os.path.abspath(__file__))
+
+
 
 def plot_performance_dynamics(loads, perf, g, h, k2, INSPECT):
     days = np.arange(len(loads))
@@ -300,7 +339,7 @@ def plot_performance_dynamics(loads, perf, g, h, k2, INSPECT):
     ax3.grid(alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(script_dir, f"simulated_annealing_performance_{INSPECT}.png"), dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join(script_dir, f"simulated_annealing_performance_{INSPECT}v3.png"), dpi=150, bbox_inches='tight')
     # plt.show()
 
 
@@ -326,7 +365,7 @@ def plot_weekly_volume(loads, INSPECT):
                  arrowprops=dict(facecolor='black', shrink=0.05), ha='center')
 
     plt.tight_layout()
-    plt.savefig(os.path.join(script_dir, f"simulated_annealing_weekly_volume_{INSPECT}.png"), dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join(script_dir, f"simulated_annealing_weekly_volume_{INSPECT}v3.png"), dpi=150, bbox_inches='tight')
     # plt.show()
 
 def print_weekly_summary(loads):
@@ -360,20 +399,33 @@ def print_detailed_summary(loads):
     print("=" * 65)
     print(f"TOTAL PLAN DISTANCE: {loads.sum():.1f} km")
 
+def plot_convergence(history: List[float], INSPECT: str):
+    """Plot best objective value vs. iteration to visualise SA convergence."""
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(history, color='steelblue', linewidth=1.5, label='Best objective (− race-day perf)')
+    ax.set_xlabel('Iteration')
+    ax.set_ylabel('Best objective value')
+    ax.set_title(f'Simulated Annealing — Convergence ({INSPECT} constraints)')
+    ax.grid(alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(script_dir, f"simulated_annealing_convergence_{INSPECT}v3.png"), dpi=150, bbox_inches='tight')
+
 def print_and_show_plots():
     plt.show()
 
 ## plots hard constraints
-print_weekly_summary(loads_hard)
-print_detailed_summary(loads_hard)
+# print_weekly_summary(loads_hard)
+# print_detailed_summary(loads_hard)
 
-plot_performance_dynamics(loads_hard, perf_hard, g_hard, h_hard, k2_hard, 'hard')
-plot_weekly_volume(loads_hard, 'hard')
+# plot_performance_dynamics(loads_hard, perf_hard, g_hard, h_hard, k2_hard, 'hard')
+# plot_weekly_volume(loads_hard, 'hard')
 
 ## plots penalty constraints
 print_weekly_summary(loads_penalty)
 print_detailed_summary(loads_penalty)
 plot_performance_dynamics(loads_penalty, perf_penalty, g_penalty, h_penalty, k2_penalty, 'penalty')
 plot_weekly_volume(loads_penalty, 'penalty')
+plot_convergence(_convergence_history, 'penalty')
 
 print_and_show_plots()
