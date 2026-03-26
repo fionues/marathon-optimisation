@@ -6,21 +6,16 @@ import math
 from scipy.optimize import differential_evolution
 
 # ─────────────────────────────────────────────
-# MODEL PARAMETERS
+# MODEL PARAMETERS (as per Busso 2003)
 # ─────────────────────────────────────────────
 @dataclass
 class BussoParams:
-    p0:   float = 0    # baseline performance (AU) -> AU: arbitrary units
-    #k1:   float = 1     # fitness gain factor (fixed, the magnitude of fitness gained by a unit of training) TODO: re-check number - depends on the athlete
-    k1: float = 0.031
-    #k3:   float = 0.05  # fatigue sensitivity multiplier (drives dynamic k2: the magnitude of fatigue incurred by a unit of training) TODO: re-check number - depends on the athlete
-    k3: float = 0.000035
-    #tau1: float = 45.0    # fitness decay constant (days)
-    tau1: float = 30.8
-    #tau2: float = 15.0    # fatigue decay constant (days)
-    tau2: float = 16.8
-    tau3: float = 2.3
-    #tau3: float = 5    # fatigue sensitivity decay constant (days)
+    p0:   float = 0         # baseline performance (AU) -> AU: arbitrary units
+    k1:   float = 0.031     # fitness gain factor (fixed, the magnitude of fitness gained by a unit of training, depends on the athlete)
+    k3:   float = 0.000035  # fatigue sensitivity multiplier (drives dynamic k2: the magnitude of fatigue incurred by a unit of training, depends on the athlete)
+    tau1: float = 30.8      # fitness decay constant (days)
+    tau2: float = 16.8      # fatigue decay constant (days)
+    tau3: float = 2.3       # fatigue sensitivity decay constant (days)
 
 # ─────────────────────────────────────────────
 # BUSSO VDR (Variable Dose-Response) MODEL: as training accumulates, the body becomes more susceptible to fatigue
@@ -49,8 +44,8 @@ def simulate_busso(loads: np.ndarray,
     k2   = np.zeros(n)   # dynamic fatigue factor
     perf = np.zeros(n)
 
-    d1 = math.exp(-1.0 / params.tau1) # fitness decay factor: every day, the athlete retains 97.8% of their fitness from the day before
-    d2 = math.exp(-1.0 / params.tau2) # fatigue decay factor: the athlete retains 93.5% of yesterday's fatigue
+    d1 = math.exp(-1.0 / params.tau1)
+    d2 = math.exp(-1.0 / params.tau2)
     d3 = math.exp(-1.0 / params.tau3)
 
     k2_prev = 0.0 # Fatigue sensitivity starts at 0 (ref: Busso 2003)
@@ -85,14 +80,6 @@ def busso_objective(loads: np.ndarray) -> float:
     perf, _, _, _ = simulate_busso(loads, params_busso)
     return -perf[-1]
 
-
-# GD is not converging after 5000 iterations (and takes long to run...)
-# Plus, we need to introduce more constraints:
-# A. at least one day per week should be 0 km (reality-check for athlete's every-day life)
-#   this constraint is not handled well by algorithms that require differentiation (GD, SLSQP, Simulated Annealing)
-#   -> try an evolutionary algorithm (does not use derivatives): Differential Evolution
-# B. at least one 32 km run must be performed (reality-check when the target event is a marathon run)
-
 # ─────────────────────────────────────────────
 # Differential Evolution
 # ─────────────────────────────────────────────
@@ -109,7 +96,7 @@ def apply_all_constraints(loads: np.ndarray) -> np.ndarray:
         min_day_idx = np.argmin(loads[week_slice]) # Find the day scheduled to min volume
         loads[w*7 + min_day_idx] = 0.0             # and force it to 0
 
-    # First week volume anchored to 40 km
+    # First week volume anchored to 40 km (realistic for intermediate runner)
     first_week_sum = loads[:7].sum()
     if first_week_sum > 0:
         loads[:7] *= (40.0 / first_week_sum)
@@ -125,7 +112,7 @@ def apply_all_constraints(loads: np.ndarray) -> np.ndarray:
             scale = (prev_sum * 1.10) / curr_sum if curr_sum > 0 else 0
             loads[w*7 : (w+1)*7] *= scale
 
-    # At least one 32 km run
+    # At least one 32 km run (to prepare for the marathon specifically)
     # We find the day the optimizer already assigned the highest load, and boost it to 32 km
     # if it hasn't organically reached that distance.
     max_day_idx = np.argmax(loads)
@@ -160,7 +147,7 @@ def de_objective(raw_loads: np.ndarray) -> float:
     return -perf[-1]
 
 # Set bounds for the optimizer: "search space" for each day
-bounds = [(0, 32) for _ in range(n_days)]                                                                                # TODO check again why
+bounds = [(0, 32) for _ in range(n_days)]
 
 result = differential_evolution(
     de_objective,
@@ -168,7 +155,7 @@ result = differential_evolution(
     strategy='best1bin',
     maxiter=1000,      # Maximum generations
     popsize=15,        # Multiplier for population size (15 * 112 days = 1680 individuals)
-    tol=0.01,         # Convergence tolerance                                                                            TODO for report: explore different tol
+    tol=0.01,          # Convergence tolerance
     disp=True          # Print progress to console
 )
 
