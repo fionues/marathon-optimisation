@@ -6,16 +6,16 @@ import math
 from scipy.optimize import differential_evolution
 
 # ─────────────────────────────────────────────
-# MODEL PARAMETERS (as per Busso 2003)
+# MODEL PARAMETERS (as per Busso 2003, scaled to km instead of TRIMP)
 # ─────────────────────────────────────────────
 @dataclass
 class BussoParams:
-    p0:   float = 0         # baseline performance (AU) -> AU: arbitrary units
-    k1:   float = 0.031     # fitness gain factor (fixed, the magnitude of fitness gained by a unit of training, depends on the athlete)
-    k3:   float = 0.000035  # fatigue sensitivity multiplier (drives dynamic k2: the magnitude of fatigue incurred by a unit of training, depends on the athlete)
-    tau1: float = 30.8      # fitness decay constant (days)
-    tau2: float = 16.8      # fatigue decay constant (days)
-    tau3: float = 2.3       # fatigue sensitivity decay constant (days)
+    p0:   float = 0       # baseline performance (AU) -> AU: arbitrary units
+    k1:   float = 0.31    # fitness gain factor (fixed, the magnitude of fitness gained by a unit of training, depends on the athlete)
+    k3:   float = 0.0035  # fatigue sensitivity multiplier (drives dynamic k2: the magnitude of fatigue incurred by a unit of training, depends on the athlete)
+    tau1: float = 30.8    # fitness decay constant (days)
+    tau2: float = 16.8    # fatigue decay constant (days)
+    tau3: float = 2.3     # fatigue sensitivity decay constant (days)
 
 # ─────────────────────────────────────────────
 # BUSSO VDR (Variable Dose-Response) MODEL: as training accumulates, the body becomes more susceptible to fatigue
@@ -137,8 +137,8 @@ def apply_all_constraints(loads: np.ndarray) -> np.ndarray:
     if loads[max_day_idx] < 32.0:
         loads[max_day_idx] = 32.0
 
-    # No tiny runs (under 5 km) before the taper weeks
-    is_not_taper = np.arange(len(loads)) < (n_days - 21)
+    # No tiny runs (under 5 km) before the race week allowed
+    is_not_taper = np.arange(len(loads)) < (n_days - 7)
     small_run_mask = (loads > 0) & (loads < 5.0) & is_not_taper
     snap_to_zero = small_run_mask & (loads < 2.5)
     loads[snap_to_zero] = 0.0
@@ -250,3 +250,22 @@ def plot_optimization_results(loads, perf, g, h):
 
 print_detailed_summary(rounded_loads)
 plot_optimization_results(optimal_loads, final_perf, final_g, final_h)
+
+
+def plot_k1_and_k2(loads, k2, k1_val):
+    days = np.arange(len(loads))
+
+    plt.figure(figsize=(12, 5))
+
+    plt.axhline(y=k1_val, color='blue', linestyle='--', linewidth=2, label=f'Fitness Factor (k1 = {k1_val})')
+    plt.plot(days, k2, color='purple', linewidth=2, label='Fatigue Sensitivity (k2)')
+
+    plt.xlabel('Days')
+    plt.ylabel('Multiplier Value')
+    plt.title('Busso Model: Dynamic Fatigue Sensitivity ($k_2$) vs. Constant Fitness Factor ($k_1$)')
+    plt.legend(loc='upper left')
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+plot_k1_and_k2(optimal_loads, final_k2, params_busso.k1)
