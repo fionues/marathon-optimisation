@@ -14,6 +14,8 @@ from plots import (
 )
 
 script_dir     = os.path.dirname(os.path.abspath(__file__))
+output_dir     = os.path.join(script_dir, 'output')
+os.makedirs(output_dir, exist_ok=True)
 PENALTY_WEIGHT = 1e4   # multiplier that converts constraint violations into cost
 
 
@@ -166,6 +168,6 @@ print_detailed_summary(loads_penalty)
 save_all_plots(
     loads_penalty, perf_penalty, g_penalty, h_penalty, k2_penalty,
     _convergence_history, params_busso.k1,
-    label='Simulated Annealing', suffix='_sa', save_dir=script_dir,
+    label='Simulated Annealing', suffix='_sa', save_dir=output_dir,
 )
 plt.show()

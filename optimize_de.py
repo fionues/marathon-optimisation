@@ -14,6 +14,8 @@ from plots import (
 )
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
+output_dir = os.path.join(script_dir, 'output')
+os.makedirs(output_dir, exist_ok=True)
 
 
 # ─────────────────────────────────────────────
@@ -133,6 +135,6 @@ print_detailed_summary(rounded_loads)
 save_all_plots(
     optimal_loads, final_perf, final_g, final_h, final_k2,
     _convergence_history, params_busso.k1,
-    label='Differential Evolution', suffix='_de', save_dir=script_dir,
+    label='Differential Evolution', suffix='_de', save_dir=output_dir,
 )
 plt.show()

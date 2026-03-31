@@ -28,6 +28,7 @@ from busso_model import (
 )
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
+output_dir     = os.path.join(script_dir, 'output')
 
 # ─────────────────────────────────────────────
 # EXPERIMENT SETTINGS
@@ -266,7 +267,7 @@ def _plot_comparison(sa_results: list, de_results: list) -> None:
         fontsize=11,
     )
     plt.tight_layout()
-    plt.savefig(os.path.join(script_dir, "comparison_boxplots.png"), dpi=150, bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, "comparison_boxplots.png"), dpi=150, bbox_inches="tight")
 
 
 def _plot_variability(sa_results: list, de_results: list) -> None:
@@ -287,7 +288,7 @@ def _plot_variability(sa_results: list, de_results: list) -> None:
     ax.legend()
     ax.grid(alpha=0.3)
     plt.tight_layout()
-    plt.savefig(os.path.join(script_dir, "comparison_scatter.png"), dpi=150, bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, "comparison_scatter.png"), dpi=150, bbox_inches="tight")
 
 
 # ─────────────────────────────────────────────
