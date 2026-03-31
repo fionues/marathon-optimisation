@@ -249,7 +249,7 @@ def _plot_comparison(sa_results: list, de_results: list) -> None:
         # Box plots
         bp = ax.boxplot(
             [sa_vals, de_vals],
-            labels=["SA", "DE"],
+            labels=["Simulated Annealing", "Differential Evolution"],
             patch_artist=True,
             medianprops=dict(color="black", linewidth=2),
         )
@@ -268,7 +268,7 @@ def _plot_comparison(sa_results: list, de_results: list) -> None:
         ax.grid(axis="y", linestyle="--", alpha=0.4)
 
     fig.suptitle(
-        f"SA (maxiter={SA_MAXITER}) vs DE (maxiter={DE_MAXITER}, popsize={DE_POPSIZE})\n"
+        f"Simulated Annealing vs Differential Evolution\n"
         f"{N_RUNS} independent runs each",
         fontsize=11,
     )
@@ -285,8 +285,8 @@ def _plot_variability(sa_results: list, de_results: list) -> None:
     sa_time = np.array([r["time"] for r in sa_results])
     de_time = np.array([r["time"] for r in de_results])
 
-    ax.scatter(sa_time, sa_perf, color="steelblue",  s=80, label="SA", zorder=3)
-    ax.scatter(de_time, de_perf, color="darkorange", s=80, label="DE", zorder=3)
+    ax.scatter(sa_time, sa_perf, color="steelblue",  s=80, label="Simulated Annealing", zorder=3)
+    ax.scatter(de_time, de_perf, color="darkorange", s=80, label="Differential Evolution", zorder=3)
 
     ax.set_xlabel("Wall-clock time (s)")
     ax.set_ylabel("Race-day performance (AU)")
