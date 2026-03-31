@@ -159,7 +159,7 @@ def _sa_cb(x, f, context):
     sa_conv.append(_sa_best[0])
 
 t0 = time.perf_counter()
-sa_res = dual_annealing(_sa_objective, bounds=bounds, maxiter=100, callback=_sa_cb)
+sa_res = dual_annealing(_sa_objective, bounds=bounds, maxiter=200, callback=_sa_cb)
 sa_time = time.perf_counter() - t0
 
 print("Running Differential Evolution …")

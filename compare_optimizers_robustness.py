@@ -167,12 +167,14 @@ def _run_sa() -> dict:
     loads        = res.x.copy()
     loads[-1]    = MARATHON_KM
     perf, _, _, _ = simulate_busso(loads, params_busso)
+    n_w = len(loads) // 7
     return {
-        "perf":  perf[-1],
-        "dist":  loads.sum(),
-        "time":  elapsed,
-        "nfev":  res.nfev,
-        "nit":   res.nit,
+        "perf":      perf[-1],
+        "dist":      loads.sum(),
+        "peak_week": max(loads[w*7:(w+1)*7].sum() for w in range(n_w)),
+        "time":      elapsed,
+        "nfev":      res.nfev,
+        "nit":       res.nit,
     }
 
 
@@ -187,12 +189,14 @@ def _run_de() -> dict:
 
     loads        = _repair_de(res.x.copy())
     perf, _, _, _ = simulate_busso(loads, params_busso)
+    n_w = len(loads) // 7
     return {
-        "perf":  perf[-1],
-        "dist":  loads.sum(),
-        "time":  elapsed,
-        "nfev":  res.nfev,
-        "nit":   res.nit,
+        "perf":      perf[-1],
+        "dist":      loads.sum(),
+        "peak_week": max(loads[w*7:(w+1)*7].sum() for w in range(n_w)),
+        "time":      elapsed,
+        "nfev":      res.nfev,
+        "nit":       res.nit,
     }
 
 
@@ -217,7 +221,7 @@ def _print_stats(label: str, results: list) -> None:
     print(f"\n{'─'*55}")
     print(f"  {label}  ({len(results)} runs)")
     print(f"{'─'*55}")
-    for key, unit in [("perf", "AU"), ("dist", "km"), ("time", "s"), ("nfev", ""), ("nit", "")]:
+    for key, unit in [("perf", "AU"), ("dist", "km"), ("peak_week", "km"), ("time", "s"), ("nfev", ""), ("nit", "")]:
         s = _stats(results, key)
         print(f"  {key:<6}  mean={s['mean']:>10.3f}{unit}  std={s['std']:>9.3f}  "
               f"min={s['min']:>9.3f}  max={s['max']:>9.3f}")
@@ -229,11 +233,13 @@ def _print_stats(label: str, results: list) -> None:
 
 def _plot_comparison(sa_results: list, de_results: list) -> None:
     metrics   = [("perf", "Race-day performance (AU)"),
-                 ("time", "Wall-clock time (s)"),
-                 ("nfev", "Function evaluations")]
+                 ("dist", "Total training volume (km)")]
+                #  ("peak_week", "Peak weekly volume (km)"),
+                #  ("time", "Wall-clock time (s)"),
+                #  ("nfev", "Function evaluations")]
     n_metrics = len(metrics)
 
-    fig, axes = plt.subplots(1, n_metrics, figsize=(5 * n_metrics, 5))
+    fig, axes = plt.subplots(1, n_metrics, figsize=(4 * n_metrics, 5))
     colors    = {"SA": "steelblue", "DE": "darkorange"}
 
     for ax, (key, ylabel) in zip(axes, metrics):
@@ -310,10 +316,22 @@ if __name__ == "__main__":
 
     sa_perf = np.array([r["perf"] for r in sa_results])
     de_perf = np.array([r["perf"] for r in de_results])
-    print(f"\n  Best SA performance  : {sa_perf.max():.3f} AU  (seed {np.argmax(sa_perf)})")
-    print(f"  Best DE performance  : {de_perf.max():.3f} AU  (seed {np.argmax(de_perf)})")
+    sa_dist = np.array([r["dist"] for r in sa_results])
+    de_dist = np.array([r["dist"] for r in de_results])
+    sa_peak = np.array([r["peak_week"] for r in sa_results])
+    de_peak = np.array([r["peak_week"] for r in de_results])
+    print(f"\n  Best SA performance  : {sa_perf.max():.3f} AU  (run {np.argmax(sa_perf)+1})")
+    print(f"  Best DE performance  : {de_perf.max():.3f} AU  (run {np.argmax(de_perf)+1})")
     print(f"  SA coefficient of variation (perf): {sa_perf.std()/sa_perf.mean()*100:.2f} %")
     print(f"  DE coefficient of variation (perf): {de_perf.std()/de_perf.mean()*100:.2f} %")
+    print(f"\n  SA total volume      : {sa_dist.mean():.1f} ± {sa_dist.std():.1f} km  "
+          f"(min {sa_dist.min():.1f}, max {sa_dist.max():.1f})")
+    print(f"  DE total volume      : {de_dist.mean():.1f} ± {de_dist.std():.1f} km  "
+          f"(min {de_dist.min():.1f}, max {de_dist.max():.1f})")
+    print(f"  SA peak weekly vol.  : {sa_peak.mean():.1f} ± {sa_peak.std():.1f} km  "
+          f"(min {sa_peak.min():.1f}, max {sa_peak.max():.1f})")
+    print(f"  DE peak weekly vol.  : {de_peak.mean():.1f} ± {de_peak.std():.1f} km  "
+          f"(min {de_peak.min():.1f}, max {de_peak.max():.1f})")
 
     _plot_comparison(sa_results, de_results)
     _plot_variability(sa_results, de_results)
