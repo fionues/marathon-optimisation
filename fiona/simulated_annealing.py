@@ -21,8 +21,8 @@ import math, random
 @dataclass
 class BussoParams:
     p0:   float = 0    # baseline performance (AU) -> AU: arbitrary units
-    k1:   float = 0.031     # fitness gain factor (fixed, the magnitude of fitness gained by a unit of training) TODO: re-check number - depends on the athlete
-    k3:   float = 0.000035  # fatigue sensitivity multiplier (drives dynamic k2: the magnitude of fatigue incurred by a unit of training) TODO: re-check number - depends on the athlete
+    k1:   float = 0.31     # fitness gain factor (fixed, the magnitude of fitness gained by a unit of training) TODO: re-check number - depends on the athlete
+    k3:   float = 0.0035  # fatigue sensitivity multiplier (drives dynamic k2: the magnitude of fatigue incurred by a unit of training) TODO: re-check number - depends on the athlete
     tau1: float = 30.8    # fitness decay constant (days)
     tau2: float = 16.8    # fatigue decay constant (days)
     tau3: float = 2.3    # fatigue sensitivity decay constant (days)
@@ -327,7 +327,7 @@ def plot_performance_dynamics(loads, perf, g, h, k2, INSPECT):
     ax2.grid(alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(script_dir, f"simulated_annealing_performance_{INSPECT}.png"), dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join(script_dir, f"simulated_annealing_performance.png"), dpi=150, bbox_inches='tight')
     # plt.show()
 
 
@@ -353,7 +353,7 @@ def plot_weekly_volume(loads, INSPECT):
                  arrowprops=dict(facecolor='black', shrink=0.05), ha='center')
 
     plt.tight_layout()
-    plt.savefig(os.path.join(script_dir, f"simulated_annealing_weekly_volume_{INSPECT}v3.png"), dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join(script_dir, f"simulated_annealing_weekly_volume.png"), dpi=150, bbox_inches='tight')
     # plt.show()
 
 def print_weekly_summary(loads):
@@ -397,7 +397,7 @@ def plot_convergence(history: List[float], INSPECT: str):
     ax.grid(alpha=0.3)
     ax.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(script_dir, f"simulated_annealing_convergence_{INSPECT}v3.png"), dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join(script_dir, f"simulated_annealing_convergence.png"), dpi=150, bbox_inches='tight')
 
 def print_and_show_plots():
     plt.show()
