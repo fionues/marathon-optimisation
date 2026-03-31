@@ -9,7 +9,7 @@ from busso_model import (
     RAMP_RATE, FIRST_WEEK_KM, LONG_RUN_KM, MAX_RUN_KM, MARATHON_KM,
 )
 from plots import (
-    plot_performance_dynamics, plot_weekly_volume, plot_convergence,
+    save_all_plots,
     print_weekly_summary, print_detailed_summary, constraint_report,
 )
 
@@ -163,12 +163,9 @@ print(f"Final Race-Day Performance: {perf_penalty[-1]:.2f} AU")
 print_weekly_summary(loads_penalty)
 print_detailed_summary(loads_penalty)
 
-plot_performance_dynamics(
+save_all_plots(
     loads_penalty, perf_penalty, g_penalty, h_penalty, k2_penalty,
-    label='Dual Annealing — penalty constraints',
-    save_dir=script_dir,
+    _convergence_history, params_busso.k1,
+    label='Simulated Annealing', suffix='_sa', save_dir=script_dir,
 )
-plot_weekly_volume(loads_penalty, label='Dual Annealing — penalty constraints', save_dir=script_dir)
-plot_convergence(_convergence_history, label='penalty constraints', save_dir=script_dir)
-
 plt.show()
