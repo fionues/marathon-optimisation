@@ -1,0 +1,114 @@
+import numpy as np
+from scipy.optimize import differential_evolution
+
+from busso_model import (
+    simulate_busso, params_busso, n_days,
+    RAMP_RATE, FIRST_WEEK_KM, LONG_RUN_KM, MAX_RUN_KM, MARATHON_KM,
+)
+from plots import plot_de_results, plot_k1_and_k2, print_detailed_summary
+
+
+# ─────────────────────────────────────────────
+# HARD CONSTRAINTS (repair / projection) with taper caps
+# ─────────────────────────────────────────────
+def apply_all_constraints(loads: np.ndarray) -> np.ndarray:
+    """Forces the optimizer's guess to comply with human training rules."""
+    loads = np.maximum(0, loads)  # Enforce non-negative loads
+
+    # At least one rest day (0 km) per week
+    for w in range(len(loads) // 7):
+        week_slice = slice(w*7, (w+1)*7)
+        min_day_idx = np.argmin(loads[week_slice])
+        loads[w*7 + min_day_idx] = 0.0
+
+    # First week volume anchored to FIRST_WEEK_KM
+    first_week_sum = loads[:7].sum()
+    if first_week_sum > 0:
+        loads[:7] *= (FIRST_WEEK_KM / first_week_sum)
+    else:
+        loads[:7] = FIRST_WEEK_KM / 6.0
+        loads[np.argmin(loads[:7])] = 0.0
+
+    # Max RAMP_RATE week-on-week increase to prevent injury
+    for w in range(1, len(loads) // 7):
+        prev_sum = loads[(w-1)*7 : w*7].sum()
+        curr_sum = loads[w*7 : (w+1)*7].sum()
+        if curr_sum > prev_sum * (1 + RAMP_RATE):
+            scale = (prev_sum * (1 + RAMP_RATE)) / curr_sum if curr_sum > 0 else 0
+            loads[w*7 : (w+1)*7] *= scale
+
+    # Specific taper caps (Weeks 14, 15, 16)
+    wk13_sum = loads[12 * 7: 13 * 7].sum()
+
+    # Week 14: ≤ 80 % of Week 13
+    wk14_slice = slice(13 * 7, 14 * 7)
+    if loads[wk14_slice].sum() > wk13_sum * 0.80:
+        loads[wk14_slice] *= (wk13_sum * 0.80) / loads[wk14_slice].sum()
+
+    # Week 15: ≤ 60 % of Week 13
+    wk15_slice = slice(14 * 7, 15 * 7)
+    if loads[wk15_slice].sum() > wk13_sum * 0.60:
+        loads[wk15_slice] *= (wk13_sum * 0.60) / loads[wk15_slice].sum()
+
+    # Week 16 (excluding race day): ≤ 35 % of Week 13
+    wk16_slice = slice(15 * 7, 16 * 7 - 1)
+    if loads[wk16_slice].sum() > wk13_sum * 0.35:
+        loads[wk16_slice] *= (wk13_sum * 0.35) / loads[wk16_slice].sum()
+
+    # At least one run of LONG_RUN_KM (boost the day with highest load if needed)
+    max_day_idx = np.argmax(loads)
+    if loads[max_day_idx] < LONG_RUN_KM:
+        loads[max_day_idx] = LONG_RUN_KM
+
+    # No tiny runs (under 5 km) outside race week
+    is_not_taper   = np.arange(len(loads)) < (n_days - 7)
+    small_run_mask = (loads > 0) & (loads < 5.0) & is_not_taper
+    loads[small_run_mask & (loads < 2.5)]  = 0.0
+    loads[small_run_mask & (loads >= 2.5)] = 5.0
+
+    # Hard cap per single run
+    loads = np.minimum(loads, MAX_RUN_KM)
+
+    # Race day
+    loads[-1] = MARATHON_KM
+
+    return loads
+
+
+def de_objective(raw_loads: np.ndarray) -> float:
+    """Repair to feasible region, simulate, return negative race-day performance."""
+    repaired_loads = apply_all_constraints(raw_loads.copy())
+    perf, _, _, _ = simulate_busso(repaired_loads, params_busso)
+    return -perf[-1]
+
+
+# ─────────────────────────────────────────────
+# RUN OPTIMISER
+# ─────────────────────────────────────────────
+bounds = [(0, MAX_RUN_KM) for _ in range(n_days)]
+
+result = differential_evolution(
+    de_objective,
+    bounds,
+    strategy='best1bin',
+    maxiter=1000,
+    popsize=15,   # population = 15 × n_days individuals
+    tol=0.01,
+    disp=True,
+)
+
+# ─────────────────────────────────────────────
+# RESULTS
+# ─────────────────────────────────────────────
+# Repair one final time to guarantee a fully feasible schedule
+optimal_loads = apply_all_constraints(result.x)
+final_perf, final_g, final_h, final_k2 = simulate_busso(optimal_loads, params_busso)
+
+print(f"Final Race-Day Performance: {final_perf[-1]:.2f} AU")
+
+rounded_loads      = np.rint(optimal_loads)
+rounded_loads[-1]  = MARATHON_KM
+
+print_detailed_summary(rounded_loads)
+plot_de_results(optimal_loads, final_perf, final_g, final_h)
+plot_k1_and_k2(optimal_loads, final_k2, params_busso.k1)
