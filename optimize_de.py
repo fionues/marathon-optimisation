@@ -97,44 +97,45 @@ def de_objective(raw_loads: np.ndarray) -> float:
 # ─────────────────────────────────────────────
 bounds = [(0, MAX_RUN_KM) for _ in range(n_days)]
 
-_convergence_history: List[float] = []
-_best_so_far = [np.inf]
+if __name__ == "__main__":
+    _convergence_history: List[float] = []
+    _best_so_far = [np.inf]
 
-def _de_callback(xk, convergence):
-    current = de_objective(xk)
-    if current < _best_so_far[0]:
-        _best_so_far[0] = current
-    _convergence_history.append(_best_so_far[0])
+    def _de_callback(xk, convergence):
+        current = de_objective(xk)
+        if current < _best_so_far[0]:
+            _best_so_far[0] = current
+        _convergence_history.append(_best_so_far[0])
 
-result = differential_evolution(
-    de_objective,
-    bounds,
-    strategy='best1bin',
-    maxiter=1000,
-    popsize=15,   # population = 15 × n_days individuals
-    tol=0.01,
-    disp=True,
-    callback=_de_callback,
-)
+    result = differential_evolution(
+        de_objective,
+        bounds,
+        strategy='best1bin',
+        maxiter=1000,
+        popsize=15,   # population = 15 × n_days individuals
+        tol=0.01,
+        disp=True,
+        callback=_de_callback,
+    )
 
-# ─────────────────────────────────────────────
-# RESULTS
-# ─────────────────────────────────────────────
-# Repair one final time to guarantee a fully feasible schedule
-optimal_loads = apply_all_constraints(result.x)
-final_perf, final_g, final_h, final_k2 = simulate_busso(optimal_loads, params_busso)
+    # ─────────────────────────────────────────────
+    # RESULTS
+    # ─────────────────────────────────────────────
+    # Repair one final time to guarantee a fully feasible schedule
+    optimal_loads = apply_all_constraints(result.x)
+    final_perf, final_g, final_h, final_k2 = simulate_busso(optimal_loads, params_busso)
 
-print(f"Final Race-Day Performance: {final_perf[-1]:.2f} AU")
+    print(f"Final Race-Day Performance: {final_perf[-1]:.2f} AU")
 
-rounded_loads      = np.rint(optimal_loads)
-rounded_loads[-1]  = MARATHON_KM
+    rounded_loads      = np.rint(optimal_loads)
+    rounded_loads[-1]  = MARATHON_KM
 
-print_weekly_summary(rounded_loads)
-print_detailed_summary(rounded_loads)
+    print_weekly_summary(rounded_loads)
+    print_detailed_summary(rounded_loads)
 
-save_all_plots(
-    optimal_loads, final_perf, final_g, final_h, final_k2,
-    _convergence_history, params_busso.k1,
-    label='Differential Evolution', suffix='_de', save_dir=output_dir,
-)
-plt.show()
+    save_all_plots(
+        optimal_loads, final_perf, final_g, final_h, final_k2,
+        _convergence_history, params_busso.k1,
+        label='Differential Evolution', suffix='_de', save_dir=output_dir,
+    )
+    plt.show()

@@ -127,47 +127,48 @@ def busso_objective_penalty(loads: np.ndarray) -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN OPTIMISER
 # ─────────────────────────────────────────────────────────────────────────────
-print("Running Dual Annealing — penalty constraints …")
+if __name__ == "__main__":
+    print("Running Dual Annealing — penalty constraints …")
 
-_convergence_history: List[float] = []
-_best_so_far = [np.inf]
+    _convergence_history: List[float] = []
+    _best_so_far = [np.inf]
 
-def _sa_callback(x, f, context):
-    if f < _best_so_far[0]:
-        _best_so_far[0] = f
-    _convergence_history.append(_best_so_far[0])
+    def _sa_callback(x, f, context):
+        if f < _best_so_far[0]:
+            _best_so_far[0] = f
+        _convergence_history.append(_best_so_far[0])
 
-res_penalty = dual_annealing(
-    busso_objective_penalty,
-    bounds=[(0, MAX_RUN_KM)] * n_days,
-    maxiter=100,
-    seed=42,
-    callback=_sa_callback,
-)
+    res_penalty = dual_annealing(
+        busso_objective_penalty,
+        bounds=[(0, MAX_RUN_KM)] * n_days,
+        maxiter=100,
+        seed=42,
+        callback=_sa_callback,
+    )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# RESULTS
-# ─────────────────────────────────────────────────────────────────────────────
-loads_penalty       = res_penalty.x
-loads_penalty[-1]   = MARATHON_KM
-perf_penalty, g_penalty, h_penalty, k2_penalty = simulate_busso(loads_penalty, params_busso)
+    # ─────────────────────────────────────────────────────────────────────────────
+    # RESULTS
+    # ─────────────────────────────────────────────────────────────────────────────
+    loads_penalty       = res_penalty.x
+    loads_penalty[-1]   = MARATHON_KM
+    perf_penalty, g_penalty, h_penalty, k2_penalty = simulate_busso(loads_penalty, params_busso)
 
-print("\n" + "=" * 55)
-print("  CONSTRAINT APPROACH COMPARISON")
-print("=" * 55)
-constraint_report("Penalty constraints", loads_penalty)
-print("=" * 55)
+    print("\n" + "=" * 55)
+    print("  CONSTRAINT APPROACH COMPARISON")
+    print("=" * 55)
+    constraint_report("Penalty constraints", loads_penalty)
+    print("=" * 55)
 
-print(f'Iterations:            {res_penalty.nit}')
-print(f'Function evaluations:  {res_penalty.nfev}')
-print(f"Final Race-Day Performance: {perf_penalty[-1]:.2f} AU")
+    print(f'Iterations:            {res_penalty.nit}')
+    print(f'Function evaluations:  {res_penalty.nfev}')
+    print(f"Final Race-Day Performance: {perf_penalty[-1]:.2f} AU")
 
-print_weekly_summary(loads_penalty)
-print_detailed_summary(loads_penalty)
+    print_weekly_summary(loads_penalty)
+    print_detailed_summary(loads_penalty)
 
-save_all_plots(
-    loads_penalty, perf_penalty, g_penalty, h_penalty, k2_penalty,
-    _convergence_history, params_busso.k1,
-    label='Simulated Annealing', suffix='_sa', save_dir=output_dir,
-)
-plt.show()
+    save_all_plots(
+        loads_penalty, perf_penalty, g_penalty, h_penalty, k2_penalty,
+        _convergence_history, params_busso.k1,
+        label='Simulated Annealing', suffix='_sa', save_dir=output_dir,
+    )
+    plt.show()
