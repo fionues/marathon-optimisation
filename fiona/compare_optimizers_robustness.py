@@ -232,11 +232,10 @@ def _print_stats(label: str, results: list) -> None:
 # ─────────────────────────────────────────────
 
 def _plot_comparison(sa_results: list, de_results: list) -> None:
-    metrics   = [("perf", "Race-day performance (AU)"),
-                 ("dist", "Total training volume (km)")]
-                #  ("peak_week", "Peak weekly volume (km)"),
-                #  ("time", "Wall-clock time (s)"),
-                #  ("nfev", "Function evaluations")]
+    metrics = [ ("perf", "Race-day performance (AU)"),
+               ("dist", "Total training volume (km)"),
+        ("time", "Wall-clock time (s)"),
+                 ("nfev", "Function evaluations")]
     n_metrics = len(metrics)
 
     fig, axes = plt.subplots(1, n_metrics, figsize=(4 * n_metrics, 5))
@@ -273,7 +272,7 @@ def _plot_comparison(sa_results: list, de_results: list) -> None:
         fontsize=11,
     )
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "comparison_boxplots.png"), dpi=150, bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, "comparison_efficiency.png"), dpi=150, bbox_inches="tight")
 
 
 def _plot_variability(sa_results: list, de_results: list) -> None:
