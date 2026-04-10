@@ -2,6 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import dual_annealing
+from typing import List
 
 from busso_model import (
     simulate_busso, params_busso, n_days, busso_objective,
@@ -16,27 +17,6 @@ script_dir     = os.path.dirname(os.path.abspath(__file__))
 output_dir     = os.path.join(script_dir, 'output')
 os.makedirs(output_dir, exist_ok=True)
 PENALTY_WEIGHT = 1e4   # multiplier that converts constraint violations into cost
-
-from dataclasses import dataclass, field
-from typing import List, Tuple
-import time
-
-@dataclass
-class ConvergenceLogger:
-    """Records (nfev, best_value, elapsed_time) at each callback."""
-    label: str
-    trace: List[Tuple[int, float, float]] = field(default_factory=list)
-    _start: float = field(default_factory=time.time, init=False, repr=False)
-
-    def reset(self):
-        self.trace = []
-        self._start = time.time()
-
-    def best_values(self):
-        return [v for _, v, _ in self.trace]
-
-    def nfevs(self):
-        return [n for n, _, _ in self.trace]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PENALTY CONSTRAINTS
@@ -88,135 +68,164 @@ def busso_objective_penalty(loads: np.ndarray) -> float:
 
     return objective + PENALTY_WEIGHT * penalty
 
-
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
-
-def plot_convergence(loggers: List[ConvergenceLogger], title="Convergence Curve"):
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    colors = {"SA": "#E07B39", "DE": "#3A7EBF"}
-
-    for logger in loggers:
-        nfevs  = logger.nfevs()
-        values = logger.best_values()
-        color  = colors.get(logger.label, "grey")
-
-        # Plot vs NFEv
-        axes[0].plot(nfevs, values, label=logger.label, color=color, linewidth=1.8)
-        # Plot vs time
-        times = [t for _, _, t in logger.trace]
-        axes[1].plot(times, values, label=logger.label, color=color, linewidth=1.8)
-
-    for ax, xlabel in zip(axes, ["Function Evaluations (NFEv)", "Wall Time (s)"]):
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel("Best Objective Value (neg. performance)")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        ax.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.4f"))
-
-    axes[0].set_title("Convergence vs. Budget")
-    axes[1].set_title("Convergence vs. Time")
-    fig.suptitle(title, fontsize=13, fontweight='bold')
-    plt.tight_layout()
-    plt.show()
-
-
-class TrackingObjective:
-    def __init__(self, fn, logger: ConvergenceLogger, perf_fn=None):
-        """
-        fn      : the objective the optimizer sees (e.g. penalized)
-        perf_fn : optional separate function for what gets logged (e.g. clean performance)
-                  If None, logs fn's return value directly.
-        """
-        self.fn = fn
-        self.perf_fn = perf_fn if perf_fn is not None else fn
-        self.logger = logger
-        self.nfev = 0
-        self.best_perf = np.inf   # tracks best logged value (perf_fn)
-        self.best_opt  = np.inf   # tracks best optimizer value (fn), for correctness
-
-    def __call__(self, x):
-        opt_val  = self.fn(x)           # penalized — returned to optimizer
-        perf_val = self.perf_fn(x)      # clean performance — logged only
-        self.nfev += 1
-
-        if opt_val < self.best_opt:     # improvement by optimizer's metric
-            self.best_opt = opt_val
-            elapsed = time.time() - self.logger._start
-            self.logger.trace.append((self.nfev, perf_val, elapsed))
-
-        return opt_val                  # optimizer always gets the penalized value
-
-    def reset(self):
-        self.nfev = 0
-        self.best_opt  = np.inf
-        self.best_perf = np.inf
-        self.logger.reset()
+def run_sa(initial_temp, restart_temp_ratio, visit, accept, seed):
+    print(f"Running Dual Annealing with initial_temp={initial_temp:.1f}, restart_temp_ratio={restart_temp_ratio:.1e}, visit={visit:.2f}, accept={accept:.2f}, seed={seed} …")
+    res = dual_annealing(
+        busso_objective_penalty,
+        bounds=[(0, MAX_RUN_KM)] * n_days,
+        maxiter=100,
+        seed=seed,
+        initial_temp=initial_temp,
+        restart_temp_ratio=restart_temp_ratio,
+        visit=visit,
+        accept=accept,
+    )
+    return res.fun, res.nfev
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN OPTIMISER
 # ─────────────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    print("Running Dual Annealing — penalty constraints …")
+# if __name__ == "__main__":
+#     print("Running Dual Annealing — penalty constraints …")
 
-    PATIENCE   = 50      # stop after this many callbacks with no improvement
-    TOLERANCE  = 0.0001  # minimum improvement to count as progress
-    _best_so_far = [np.inf]
-    _no_improve_count = [0]
+#     PATIENCE   = 50      # stop after this many callbacks with no improvement
+#     TOLERANCE  = 0.0001  # minimum improvement to count as progress
+#     _best_so_far = [np.inf]
+#     _no_improve_count = [0]
 
-    def _sa_callback(x, f, context):
-        if _best_so_far[0] - f > TOLERANCE:
-            _best_so_far[0] = f
-            _no_improve_count[0] = 0
-        else:
-            _no_improve_count[0] += 1
+#     def _stopping_callback(x, f, context):
+#         if _best_so_far[0] - f > TOLERANCE:
+#             _best_so_far[0] = f
+#             _no_improve_count[0] = 0
+#         else:
+#             _no_improve_count[0] += 1
 
-        if _no_improve_count[0] >= PATIENCE:
-            print(f"Early stopping: no improvement > {TOLERANCE} for {PATIENCE} callbacks.")
-            return True  # signals dual_annealing to stop
-        return False
+#         if _no_improve_count[0] >= PATIENCE:
+#             print(f"Early stopping: no improvement > {TOLERANCE} for {PATIENCE} callbacks.")
+#             return True  # signals dual_annealing to stop
+#         return False
     
-    sa_logger  = ConvergenceLogger(label="SA")
-    tracked_sa = TrackingObjective(
-        fn=busso_objective_penalty,
-        logger=sa_logger,
-        perf_fn=busso_objective,
-    )
+#     _convergence_history: List[float] = []
 
-    res_penalty = dual_annealing(
-        tracked_sa,
-        bounds=[(0, MAX_RUN_KM)] * n_days,
-        maxiter=500,
-        seed=42
-    )
+#     def _convergence_callback(x, f, context):
+#         if f < _best_so_far[0]:
+#             _best_so_far[0] = f
+#         _convergence_history.append(_best_so_far[0])
 
-    sa_logger.trace.append((res_penalty.nfev, res_penalty.fun, time.time() - sa_logger._start))
+#     res_penalty = dual_annealing(
+#         busso_objective_penalty,
+#         bounds=[(0, MAX_RUN_KM)] * n_days,
+#         maxiter=100,
+#         seed=42,
+#         callback=_convergence_callback,
+#     )
 
-    # ─────────────────────────────────────────────────────────────────────────────
-    # RESULTS
-    # ─────────────────────────────────────────────────────────────────────────────
-    loads_penalty       = res_penalty.x
-    loads_penalty[-1]   = MARATHON_KM
-    perf_penalty, g_penalty, h_penalty, k2_penalty = simulate_busso(loads_penalty, params_busso)
+#     # ─────────────────────────────────────────────────────────────────────────────
+#     # RESULTS
+#     # ─────────────────────────────────────────────────────────────────────────────
+#     loads_penalty       = res_penalty.x
+#     loads_penalty[-1]   = MARATHON_KM
+#     perf_penalty, g_penalty, h_penalty, k2_penalty = simulate_busso(loads_penalty, params_busso)
 
-    print("\n" + "=" * 55)
-    print("  CONSTRAINT APPROACH COMPARISON")
-    print("=" * 55)
-    constraint_report("Penalty constraints", loads_penalty)
-    print("=" * 55)
+#     print("\n" + "=" * 55)
+#     print("  CONSTRAINT APPROACH COMPARISON")
+#     print("=" * 55)
+#     constraint_report("Penalty constraints", loads_penalty)
+#     print("=" * 55)
 
-    print(f'Iterations:            {res_penalty.nit}')
-    print(f'Function evaluations:  {res_penalty.nfev}')
-    print(f"Final Race-Day Performance: {perf_penalty[-1]:.2f} AU")
+#     print(f'Iterations:            {res_penalty.nit}')
+#     print(f'Function evaluations:  {res_penalty.nfev}')
+#     print(f"Final Race-Day Performance: {perf_penalty[-1]:.2f} AU")
 
-    print_weekly_summary(loads_penalty)
-    print_detailed_summary(loads_penalty)
+#     print_weekly_summary(loads_penalty)
+#     print_detailed_summary(loads_penalty)
 
-    plot_convergence([sa_logger], title="Simulated Annealing Convergence")
+#     save_all_plots(
+#         loads_penalty, perf_penalty, g_penalty, h_penalty, k2_penalty,
+#         _convergence_history, params_busso.k1,
+#         label='Simulated Annealing', suffix='_sa', save_dir=output_dir,
+#     )
+#     plt.show()
 
-    # save_all_plots(
-    #     loads_penalty, perf_penalty, g_penalty, h_penalty, k2_penalty,
-    #     [], params_busso.k1,
-    #     label='Simulated Annealing', suffix='_sa', save_dir=output_dir,
-    # )
-    # plt.show()
+
+# ─────────────────────────────────────────────
+# Find best parameters for SA with random search
+# ─────────────────────────────────────────────
+from scipy.stats import loguniform, uniform
+import pandas as pd
+
+N_SEEDS = 2  # 5
+
+N_TRIALS = 5 # 50
+rng = np.random.default_rng(0)
+
+results = []
+
+# Run defaults for comparison 
+DEFAULT_PARAMS = {
+    "initial_temp":       5230,
+    "restart_temp_ratio": 2e-5,
+    "visit":              2.62,
+    "accept":             -5.0,
+}
+
+finals = [run_sa(**DEFAULT_PARAMS, seed=s) for s in range(N_SEEDS)]
+fun_vals = [f for f, _ in finals]
+results.append({
+    **DEFAULT_PARAMS,
+    "label":    "default",
+    "mean_fun": np.mean(fun_vals),
+    "std_fun":  np.std(fun_vals),
+})
+
+# Run random search 
+for _ in range(N_TRIALS):
+    params = {
+        "initial_temp":       10 ** rng.uniform(2, 5),     # 100 – 100000
+        "restart_temp_ratio": 10 ** rng.uniform(-6, -3),   # 1e-6 – 1e-3
+        "visit":              rng.uniform(1.5, 2.99),      # must be < 3
+        "accept":             rng.uniform(-15, -0.5),
+    }
+    finals = [run_sa(**params, seed=s) for s in range(N_SEEDS)]
+    fun_vals = [f for f, _ in finals]
+    results.append({**params, "mean_fun": np.mean(fun_vals), "std_fun": np.std(fun_vals)})
+
+df = pd.DataFrame(results).sort_values("mean_fun")
+print(df.head(10).to_string(index=False))
+
+
+# ─────────────────────────────────────────────
+# Find best parameters for SA with grid search
+# ─────────────────────────────────────────────
+from itertools import product
+
+param_grid = {
+    "initial_temp":       [1000, 5230, 15000],
+    "restart_temp_ratio": [1e-5, 2e-5, 1e-4],
+    "visit":              [2.3, 2.62, 2.9],
+    "accept":             [-10.0, -5.0, -1.0],
+}
+N_SEEDS = 5  # more seeds = more reliable, but slower
+
+results = []
+combos  = list(product(*param_grid.values()))
+print(f"Total runs: {len(combos) * N_SEEDS}")
+
+for initial_temp, restart_temp_ratio, visit, accept in combos:
+    finals = [
+        run_sa(initial_temp, restart_temp_ratio, visit, accept, seed)
+        for seed in range(N_SEEDS)
+    ]
+    fun_vals = [f for f, _ in finals]
+    results.append({
+        "initial_temp":       initial_temp,
+        "restart_temp_ratio": restart_temp_ratio,
+        "visit":              visit,
+        "accept":             accept,
+        "mean_fun":           np.mean(fun_vals),
+        "std_fun":            np.std(fun_vals),
+        "best_fun":           np.min(fun_vals),
+    })
+
+df = pd.DataFrame(results).sort_values("mean_fun")
+print(df.head(10).to_string(index=False))

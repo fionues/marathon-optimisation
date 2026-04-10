@@ -24,6 +24,7 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import differential_evolution, dual_annealing
+import time
 
 from busso_model import simulate_busso, params_busso, n_days, MAX_RUN_KM, MARATHON_KM
 
@@ -34,7 +35,7 @@ from optimize_de import (
     apply_all_constraints as de_repair,
     bounds as de_bounds,
 )
-from optimize_sa import busso_objective_penalty, apply_all_constraints as sa_repair
+from optimize_sa import busso_objective_penalty
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 output_dir = os.path.join(script_dir, "output")
@@ -43,10 +44,11 @@ os.makedirs(output_dir, exist_ok=True)
 # ─────────────────────────────────────────────
 # EXPERIMENT SETTINGS
 # ─────────────────────────────────────────────
-N_RUNS      = 5
-SA_MAXITER  = 1000    # enough for convergence to be 0 without excessive runtime
-DE_MAXITER  = 1000 # DE stops after tolerance is met, so this is a max cap rather than the max iterations
+N_RUNS      = 10
+SA_MAXITER  = 100    # enough for convergence to be 0 without excessive runtime
+DE_MAXITER  = 500    # DE stops after tolerance is met, so this is a max cap rather than the max iterations
 DE_POPSIZE  = 15
+DE_TOLERANCE = 0.01  # DE stops when population's best and worst are within this % of each other
 
 sa_bounds = [(0, MAX_RUN_KM)] * n_days
 
@@ -54,76 +56,69 @@ sa_bounds = [(0, MAX_RUN_KM)] * n_days
 # ─────────────────────────────────────────────
 # CONVERGENCE TRACKING WRAPPER
 # ─────────────────────────────────────────────
-
-def _make_tracked(fn, perf_fn=None):
-    """Wrap an objective so every call appends (nfev, best_perf) to .history.
-
-    perf_fn: optional callable(x, val) -> float that extracts the true
-    race-day performance from a candidate x and its objective value val.
-    When None (default), best performance is taken as -val, which is correct
-    for objectives of the form ``return -perf[-1]`` with no penalty term
-    (i.e. DE).  For SA, pass a perf_fn that re-simulates after repair so
-    that penalty terms do not contaminate the convergence curve.
+def _tracked_objective(fn, perf_fn=None):
     """
-    count    = [0]
-    best_obj = [np.inf]
-    history  = []          # list of (cumulative_nfev, best_performance_so_far)
+    Returns (tracked_fn, get_trace) where:
+      - tracked_fn  : pass to the optimizer
+      - get_trace   : call after optimization to get (nfevs, perfs, times)
+    """
+    _perf_fn   = perf_fn if perf_fn is not None else fn
+    state      = {"nfev": 0, "best_opt": np.inf, "trace": [], "start": time.time()}
 
-    def wrapper(x):
-        val = fn(x)
-        count[0] += 1
-        if val < best_obj[0]:
-            best_obj[0] = val
-            best_perf = perf_fn(x, val) if perf_fn is not None else -val
-            history.append((count[0], best_perf))
-        elif history:
-            history.append((count[0], history[-1][1]))
-        else:
-            history.append((count[0], -np.inf))
-        return val
+    def tracked_fn(x):
+        opt_val  = fn(x)
+        perf_val = _perf_fn(x)
+        state["nfev"] += 1
+        if opt_val < state["best_opt"]:
+            state["best_opt"] = opt_val
+            state["trace"].append((state["nfev"], perf_val, time.time() - state["start"]))
+        return opt_val
 
-    wrapper.history = history
-    return wrapper
+    def get_trace():
+        nfevs = [n for n, _, _ in state["trace"]]
+        perfs = [p for _, p, _ in state["trace"]]
+        times = [t for _, _, t in state["trace"]]
+        return nfevs, perfs, times
 
+    return tracked_fn, get_trace
 
 # ─────────────────────────────────────────────
 # SINGLE-RUN HELPERS
 # ─────────────────────────────────────────────
 
-def _sa_perf_fn(x, val):
-    """True race-day performance for an SA candidate (simulate after repair)."""
-    repaired = sa_repair(x.copy())
-    perf, _, _, _ = simulate_busso(repaired, params_busso)
-    return perf[-1]
-
-_best_so_far = [np.inf]
-PATIENCE   = 50    # stop after this many callbacks with no improvement
-TOLERANCE  = 0.0001  # minimum improvement to count as progress
-_no_improve_count = [0]
-_last_best = [-np.inf]
-
-def _sa_callback(x, f, context):
+def _sa_perf_fn(x):
+    """race-day performance for an SA candidate."""
     perf, _, _, _ = simulate_busso(x.copy(), params_busso)
-    objective = -perf[-1]
-    if objective < _best_so_far[0]:
-        _best_so_far[0] = objective
+    return -perf[-1]
 
-    if _best_so_far[0] - _last_best[0] > TOLERANCE:
-        _last_best[0] = _best_so_far[0]
-        _no_improve_count[0] = 0
-    else:
-        _no_improve_count[0] += 1
 
-    if _no_improve_count[0] >= PATIENCE:
-        print(f"Early stopping: no improvement > {TOLERANCE} for {PATIENCE} callbacks.")
-        return True  # signals dual_annealing to stop
-    return False
+def _stopping_callback(tol=0.001, patience=50):
+    """
+    Stops dual_annealing when best value hasn't improved by `tol`
+    over the last `patience` callback calls.
+    """
+    state = {"best": np.inf, "stagnant_count": 0}
+
+    def callback(x, f, context):
+        if f < state["best"] - tol:
+            state["best"] = f
+            state["stagnant_count"] = 0
+        else:
+            state["stagnant_count"] += 1
+
+        return state["stagnant_count"] >= patience  # True = stop
+
+    return callback
 
 
 def _run_sa() -> dict:
-    # tracked = _make_tracked(busso_objective_penalty, perf_fn=_sa_perf_fn)
+    tracked_sa, get_sa_trace = _tracked_objective(
+        fn=busso_objective_penalty,
+        perf_fn=_sa_perf_fn,
+    )
+    res = dual_annealing(tracked_sa, bounds=sa_bounds, maxiter=SA_MAXITER, callback=_stopping_callback())
+    sa_nfevs, sa_perfs, _ = get_sa_trace()
     t0      = time.perf_counter()
-    res     = dual_annealing(busso_objective_penalty, bounds=sa_bounds, maxiter=SA_MAXITER, callback=_sa_callback)
     elapsed = time.perf_counter() - t0
 
     loads = res.x.copy()
@@ -137,21 +132,24 @@ def _run_sa() -> dict:
         "time":      elapsed,
         "nfev":      res.nfev,
         "nit":       res.nit,
-        # "conv":      tracked.history,   # list of (nfev, best_perf)
+        "conv":      list(zip(sa_nfevs, sa_perfs))
     }
 
 
 def _run_de() -> dict:
-    # tracked = _make_tracked(de_objective)
+    tracked_de, get_de_trace = _tracked_objective(
+        fn=de_objective,
+    )
     t0      = time.perf_counter()
     res     = differential_evolution(
-        de_objective,
+        tracked_de,
         de_bounds,
         strategy="best1bin",
         maxiter=DE_MAXITER,
         popsize=DE_POPSIZE,
-        tol=0.001,
+        tol=DE_TOLERANCE,
     )
+    de_nfevs, de_perfs, _ = get_de_trace()
     elapsed = time.perf_counter() - t0
 
     loads = de_repair(res.x.copy())
@@ -164,7 +162,7 @@ def _run_de() -> dict:
         "time":      elapsed,
         "nfev":      res.nfev,
         "nit":       res.nit,
-        # "conv":      tracked.history,   # list of (nfev, best_perf)
+        "conv":      list(zip(de_nfevs, de_perfs))
     }
 
 
@@ -331,48 +329,48 @@ def _plot_volume_comparison(sa_results: list, de_results: list) -> None:
     print(f"  Saved: {path}")
 
 
-# def _plot_convergence(sa_results: list, de_results: list) -> None:
-#     """Solution quality (race-day performance) vs cumulative function evaluations.
+def _plot_convergence(sa_results: list, de_results: list) -> None:
+    """Solution quality (race-day performance) vs cumulative function evaluations.
 
-#     Each run is plotted as a thin line; the mean across runs is shown as a
-#     thick line.  Both algorithms are overlaid on the same axes for direct
-#     comparison.
-#     """
-#     fig, ax = plt.subplots(figsize=(9, 5))
+    Each run is plotted as a thin line; the mean across runs is shown as a
+    thick line.  Both algorithms are overlaid on the same axes for direct
+    comparison.
+    """
+    fig, ax = plt.subplots(figsize=(9, 5))
 
-#     for results, label, color in [
-#         (sa_results, "Simulated Annealing", "steelblue"),
-#         (de_results, "Differential Evolution", "darkorange"),
-#     ]:
-#         # Build a common nfev grid from 1 to the max nfev across all runs
-#         max_nfev = max(r["conv"][-1][0] for r in results)
-#         grid = np.linspace(1, max_nfev, 500)
+    for results, label, color in [
+        (sa_results, "Simulated Annealing", "steelblue"),
+        (de_results, "Differential Evolution", "darkorange"),
+    ]:
+        # Build a common nfev grid from 1 to the max nfev across all runs
+        max_nfev = max(r["conv"][-1][0] for r in results)
+        grid = np.linspace(1, max_nfev, 500)
 
-#         interp_curves = []
-#         for r in results:
-#             nfevs, perfs = zip(*r["conv"])
-#             nfevs = np.array(nfevs, dtype=float)
-#             perfs = np.array(perfs, dtype=float)
-#             # Forward-fill: for each grid point take the best perf seen so far
-#             interp = np.interp(grid, nfevs, perfs)
-#             interp_curves.append(interp)
-#             ax.plot(grid, interp, color=color, alpha=0.15, linewidth=0.8)
+        interp_curves = []
+        for r in results:
+            nfevs, perfs = zip(*r["conv"])
+            nfevs = np.array(nfevs, dtype=float)
+            perfs = np.array(perfs, dtype=float)
+            # Forward-fill: for each grid point take the best perf seen so far
+            interp = np.interp(grid, nfevs, perfs)
+            interp_curves.append(interp)
+            ax.plot(grid, interp, color=color, alpha=0.15, linewidth=0.8)
 
-#         mean_curve = np.mean(interp_curves, axis=0)
-#         ax.plot(grid, mean_curve, color=color, linewidth=2.2, label=f"{label} (mean)")
+        mean_curve = np.mean(interp_curves, axis=0)
+        ax.plot(grid, mean_curve, color=color, linewidth=2.2, label=f"{label} (mean)")
 
-#     ax.set_xlabel("Cumulative function evaluations")
-#     ax.set_ylabel("Best race-day performance (AU)")
-#     ax.set_title(
-#         f"Convergence curves — solution quality vs function evaluations\n"
-#         f"({N_RUNS} independent runs per algorithm; thin lines = individual runs)"
-#     )
-#     ax.legend()
-#     ax.grid(alpha=0.3)
-#     plt.tight_layout()
-#     path = os.path.join(output_dir, "robustness_convergence.png")
-#     plt.savefig(path, dpi=150, bbox_inches="tight")
-#     print(f"  Saved: {path}")
+    ax.set_xlabel("Cumulative function evaluations")
+    ax.set_ylabel("Best race-day performance (AU)")
+    ax.set_title(
+        f"Convergence curves — solution quality vs function evaluations\n"
+        f"({N_RUNS} independent runs per algorithm; thin lines = individual runs)"
+    )
+    ax.legend()
+    ax.grid(alpha=0.3)
+    plt.tight_layout()
+    path = os.path.join(output_dir, "robustness_convergence.png")
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    print(f"  Saved: {path}")
 
 
 # ─────────────────────────────────────────────
