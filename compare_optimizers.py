@@ -34,7 +34,7 @@ from optimize_de import (
     apply_all_constraints as de_repair,
     bounds as de_bounds,
 )
-from optimize_sa import busso_objective_penalty, apply_all_constraints as sa_repair
+from optimize_sa import busso_objective_penalty
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 output_dir = os.path.join(script_dir, "output")
@@ -85,6 +85,40 @@ def _make_tracked(fn, perf_fn=None):
     wrapper.history = history
     return wrapper
 
+# def _make_tracked(fn, perf_fn=None):
+#     count     = [0]
+#     best_perf = [-np.inf]
+#     history   = []          # list of (cumulative_nfev, best_performance_so_far)
+
+#     def wrapper(x):
+#         val = fn(x)
+#         count[0] += 1
+#         current_perf = perf_fn(x, val) if perf_fn is not None else -val
+#         if current_perf > best_perf[0]:
+#             best_perf[0] = current_perf
+#         history.append((count[0], best_perf[0]))
+#         return val
+
+#     wrapper.history = history
+#     return wrapper
+
+# def _make_tracked(fn):
+#     """Wrap an objective so every call appends (nfev, best_perf) to .history."""
+#     count  = [0]
+#     best   = [np.inf]
+#     history = []          # list of (cumulative_nfev, best_performance_so_far)
+
+#     def wrapper(x):
+#         val = fn(x)
+#         count[0] += 1
+#         if val < best[0]:
+#             best[0] = val
+#         history.append((count[0], -best[0]))   # performance = -objective
+#         return val
+
+#     wrapper.history = history
+#     return wrapper
+
 
 # ─────────────────────────────────────────────
 # SINGLE-RUN HELPERS
@@ -92,8 +126,7 @@ def _make_tracked(fn, perf_fn=None):
 
 def _sa_perf_fn(x, val):
     """True race-day performance for an SA candidate (simulate after repair)."""
-    repaired = sa_repair(x.copy())
-    perf, _, _, _ = simulate_busso(repaired, params_busso)
+    perf, _, _, _ = simulate_busso(x.copy(), params_busso)
     return perf[-1]
 
 

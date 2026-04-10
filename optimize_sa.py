@@ -18,63 +18,8 @@ output_dir     = os.path.join(script_dir, 'output')
 os.makedirs(output_dir, exist_ok=True)
 PENALTY_WEIGHT = 1e4   # multiplier that converts constraint violations into cost
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-# APPROACH A — HARD CONSTRAINTS  (repair / projection)
-# Each candidate solution is projected onto the feasible region before the
-# model is evaluated.  The optimizer never sees an infeasible point.
-# ─────────────────────────────────────────────────────────────────────────────
-def apply_all_constraints(loads: np.ndarray) -> np.ndarray:
-    """Projects a candidate load vector onto the feasible region."""
-    loads = np.maximum(0, loads)                       # non-negative loads
-
-    # At least one rest day (0 km) per week
-    for w in range(len(loads) // 7):
-        min_day_idx = np.argmin(loads[w*7:(w+1)*7])
-        loads[w*7 + min_day_idx] = 0.0
-
-    # First week anchored to FIRST_WEEK_KM
-    first_week_sum = loads[:7].sum()
-    if first_week_sum > 0:
-        loads[:7] *= (FIRST_WEEK_KM / first_week_sum)
-    else:
-        loads[:7] = FIRST_WEEK_KM / 6.0
-        loads[np.argmin(loads[:7])] = 0.0
-
-    # Max 10 % ramp rate per week
-    for w in range(1, len(loads) // 7):
-        prev_sum = loads[(w-1)*7 : w*7].sum()
-        curr_sum = loads[w*7 : (w+1)*7].sum()
-        if curr_sum > prev_sum * (1 + RAMP_RATE):
-            scale = (prev_sum * (1 + RAMP_RATE)) / curr_sum if curr_sum > 0 else 0
-            loads[w*7 : (w+1)*7] *= scale
-
-    # At least one run of exactly LONG_RUN_KM (boost the busiest day if needed)
-    max_day_idx = np.argmax(loads)
-    if loads[max_day_idx] < LONG_RUN_KM:
-        loads[max_day_idx] = LONG_RUN_KM
-
-    # No single run above MAX_RUN_KM
-    loads = np.minimum(loads, MAX_RUN_KM)
-
-    # No load in the open interval (0, 5): snap to 0 if < 2.5, else to 5
-    loads = np.where((loads > 0) & (loads < 5), np.where(loads < 2.5, 0.0, 5.0), loads)
-
-    # Race day
-    loads[-1] = MARATHON_KM
-
-    return loads
-
-
-def busso_objective_hard(loads: np.ndarray) -> float:
-    """Repair → simulate → return negative race-day performance."""
-    loads = apply_all_constraints(loads.copy())
-    perf, _, _, _ = simulate_busso(loads, params_busso)
-    return -perf[-1]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# APPROACH B — PENALTY CONSTRAINTS
+# PENALTY CONSTRAINTS
 # Infeasible solutions are allowed but penalised.
 # ─────────────────────────────────────────────────────────────────────────────
 def busso_objective_penalty(loads: np.ndarray) -> float:
@@ -130,18 +75,46 @@ def busso_objective_penalty(loads: np.ndarray) -> float:
 if __name__ == "__main__":
     print("Running Dual Annealing — penalty constraints …")
 
-    _convergence_history: List[float] = []
-    _best_so_far = [np.inf]
+    _convergence_history: List[tuple[float, float]] = []
+    _best_perf_so_far = [-np.inf]
+    _nfev = [0]
+
+    def _counted_objective(loads: np.ndarray) -> float:
+        _nfev[0] += 1
+        perf, _, _, _ = simulate_busso(loads, params_busso)
+        race_day_perf = perf[-1]
+        if race_day_perf > _best_perf_so_far[0]:
+            _best_perf_so_far[0] = race_day_perf
+        _convergence_history.append((_nfev[0], _best_perf_so_far[0]))
+        return busso_objective_penalty(loads)
+
+    PATIENCE   = 10    # stop after this many callbacks with no improvement
+    TOLERANCE  = 0.001  # minimum improvement to count as progress
+    _no_improve_count = [0]
+    _last_best = [-np.inf]
 
     def _sa_callback(x, f, context):
-        if f < _best_so_far[0]:
-            _best_so_far[0] = f
-        _convergence_history.append(_best_so_far[0])
+        perf, _, _, _ = simulate_busso(x, params_busso)
+        race_day_perf = perf[-1]
+        if race_day_perf > _best_perf_so_far[0]:
+            _best_perf_so_far[0] = race_day_perf
+        _convergence_history.append((_nfev[0], _best_perf_so_far[0]))
+
+        if _best_perf_so_far[0] - _last_best[0] > TOLERANCE:
+            _last_best[0] = _best_perf_so_far[0]
+            _no_improve_count[0] = 0
+        else:
+            _no_improve_count[0] += 1
+
+        if _no_improve_count[0] >= PATIENCE:
+            print(f"Early stopping: no improvement > {TOLERANCE} for {PATIENCE} callbacks.")
+            return True  # signals dual_annealing to stop
+        return False
 
     res_penalty = dual_annealing(
-        busso_objective_penalty,
+        _counted_objective,
         bounds=[(0, MAX_RUN_KM)] * n_days,
-        maxiter=100,
+        maxiter=1000,
         seed=42,
         callback=_sa_callback,
     )
@@ -171,4 +144,7 @@ if __name__ == "__main__":
         _convergence_history, params_busso.k1,
         label='Simulated Annealing', suffix='_sa', save_dir=output_dir,
     )
+    # save_all_plots(
+    #     _convergence_history, label='Simulated Annealing', suffix='_sa', save_dir=output_dir,
+    # )
     plt.show()

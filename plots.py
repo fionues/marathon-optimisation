@@ -136,16 +136,23 @@ def plot_performance_dynamics(
 
 
 def plot_convergence(
-    history: List[float],
+    history: List[tuple[float, float]],
     label: str,
     suffix: str = '',
     save_dir: str = None,
 ) -> None:
     """Plot best objective value vs. iteration to visualise convergence."""
+    # THRESHOLD = 1e5
+    # clipped = [(i, v) for i, v in enumerate(history) if v < THRESHOLD]
+    # if clipped:
+    #     xs, ys = zip(*clipped)
+    # else:
+    #     xs, ys = range(len(history)), history
+
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(history, color='steelblue', linewidth=1.5, label='Best objective (− race-day perf)')
-    ax.set_xlabel('Iteration')
-    ax.set_ylabel('Best objective value')
+    ax.plot([i for i, _ in history], [v for _, v in history], color='steelblue', linewidth=1.5, label='Best race-day performance')
+    ax.set_xlabel('Function evaluations')
+    ax.set_ylabel('Best race-day performance (AU)')
     ax.set_title(f'Convergence ({label})')
     ax.grid(alpha=0.3)
     ax.legend()
@@ -190,7 +197,7 @@ def save_all_plots(
     g: np.ndarray,
     h: np.ndarray,
     k2: np.ndarray,
-    convergence_history: List[float],
+    convergence_history: List[tuple[float, float]],
     k1_val: float,
     label: str,
     suffix: str,
@@ -200,8 +207,10 @@ def save_all_plots(
     Call all 5 plot functions, saving each to its own PNG file.
     Figures are kept open so the caller can follow with plt.show().
     """
-    plot_daily_loads(loads,  label=label, suffix=suffix, save_dir=save_dir)
-    plot_weekly_volume(loads, label=label, suffix=suffix, save_dir=save_dir)
-    plot_performance_dynamics(loads, perf, g, h, label=label, suffix=suffix, save_dir=save_dir)
+    # plot_daily_loads(loads,  label=label, suffix=suffix, save_dir=save_dir)
+    # plot_weekly_volume(loads, label=label, suffix=suffix, save_dir=save_dir)
+    # plot_performance_dynamics(loads, perf, g, h, label=label, suffix=suffix, save_dir=save_dir)
+    # print("Convergence history (iteration, best objective):")
+    # print(convergence_history)
     plot_convergence(convergence_history, label=label, suffix=suffix, save_dir=save_dir)
-    plot_k1_and_k2(loads, k2, k1_val, label=label, suffix=suffix, save_dir=save_dir)
+    # plot_k1_and_k2(loads, k2, k1_val, label=label, suffix=suffix, save_dir=save_dir)
