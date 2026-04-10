@@ -134,8 +134,10 @@ if __name__ == "__main__":
     _best_so_far = [np.inf]
 
     def _sa_callback(x, f, context):
-        if f < _best_so_far[0]:
-            _best_so_far[0] = f
+        perf, _, _, _ = simulate_busso(x.copy(), params_busso)
+        objective = -perf[-1]
+        if objective < _best_so_far[0]:
+            _best_so_far[0] = objective
         _convergence_history.append(_best_so_far[0])
 
     res_penalty = dual_annealing(
