@@ -1,11 +1,10 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import List
 from scipy.optimize import dual_annealing
 
 from busso_model import (
-    simulate_busso, params_busso, n_days,
+    simulate_busso, params_busso, n_days, busso_objective,
     RAMP_RATE, FIRST_WEEK_KM, LONG_RUN_KM, MAX_RUN_KM, MARATHON_KM,
 )
 from plots import (
@@ -18,63 +17,29 @@ output_dir     = os.path.join(script_dir, 'output')
 os.makedirs(output_dir, exist_ok=True)
 PENALTY_WEIGHT = 1e4   # multiplier that converts constraint violations into cost
 
+from dataclasses import dataclass, field
+from typing import List, Tuple
+import time
+
+@dataclass
+class ConvergenceLogger:
+    """Records (nfev, best_value, elapsed_time) at each callback."""
+    label: str
+    trace: List[Tuple[int, float, float]] = field(default_factory=list)
+    _start: float = field(default_factory=time.time, init=False, repr=False)
+
+    def reset(self):
+        self.trace = []
+        self._start = time.time()
+
+    def best_values(self):
+        return [v for _, v, _ in self.trace]
+
+    def nfevs(self):
+        return [n for n, _, _ in self.trace]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# APPROACH A — HARD CONSTRAINTS  (repair / projection)
-# Each candidate solution is projected onto the feasible region before the
-# model is evaluated.  The optimizer never sees an infeasible point.
-# ─────────────────────────────────────────────────────────────────────────────
-def apply_all_constraints(loads: np.ndarray) -> np.ndarray:
-    """Projects a candidate load vector onto the feasible region."""
-    loads = np.maximum(0, loads)                       # non-negative loads
-
-    # At least one rest day (0 km) per week
-    for w in range(len(loads) // 7):
-        min_day_idx = np.argmin(loads[w*7:(w+1)*7])
-        loads[w*7 + min_day_idx] = 0.0
-
-    # First week anchored to FIRST_WEEK_KM
-    first_week_sum = loads[:7].sum()
-    if first_week_sum > 0:
-        loads[:7] *= (FIRST_WEEK_KM / first_week_sum)
-    else:
-        loads[:7] = FIRST_WEEK_KM / 6.0
-        loads[np.argmin(loads[:7])] = 0.0
-
-    # Max 10 % ramp rate per week
-    for w in range(1, len(loads) // 7):
-        prev_sum = loads[(w-1)*7 : w*7].sum()
-        curr_sum = loads[w*7 : (w+1)*7].sum()
-        if curr_sum > prev_sum * (1 + RAMP_RATE):
-            scale = (prev_sum * (1 + RAMP_RATE)) / curr_sum if curr_sum > 0 else 0
-            loads[w*7 : (w+1)*7] *= scale
-
-    # At least one run of exactly LONG_RUN_KM (boost the busiest day if needed)
-    max_day_idx = np.argmax(loads)
-    if loads[max_day_idx] < LONG_RUN_KM:
-        loads[max_day_idx] = LONG_RUN_KM
-
-    # No single run above MAX_RUN_KM
-    loads = np.minimum(loads, MAX_RUN_KM)
-
-    # No load in the open interval (0, 5): snap to 0 if < 2.5, else to 5
-    loads = np.where((loads > 0) & (loads < 5), np.where(loads < 2.5, 0.0, 5.0), loads)
-
-    # Race day
-    loads[-1] = MARATHON_KM
-
-    return loads
-
-
-def busso_objective_hard(loads: np.ndarray) -> float:
-    """Repair → simulate → return negative race-day performance."""
-    loads = apply_all_constraints(loads.copy())
-    perf, _, _, _ = simulate_busso(loads, params_busso)
-    return -perf[-1]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# APPROACH B — PENALTY CONSTRAINTS
+# PENALTY CONSTRAINTS
 # Infeasible solutions are allowed but penalised.
 # ─────────────────────────────────────────────────────────────────────────────
 def busso_objective_penalty(loads: np.ndarray) -> float:
@@ -124,29 +89,108 @@ def busso_objective_penalty(loads: np.ndarray) -> float:
     return objective + PENALTY_WEIGHT * penalty
 
 
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+
+def plot_convergence(loggers: List[ConvergenceLogger], title="Convergence Curve"):
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    colors = {"SA": "#E07B39", "DE": "#3A7EBF"}
+
+    for logger in loggers:
+        nfevs  = logger.nfevs()
+        values = logger.best_values()
+        color  = colors.get(logger.label, "grey")
+
+        # Plot vs NFEv
+        axes[0].plot(nfevs, values, label=logger.label, color=color, linewidth=1.8)
+        # Plot vs time
+        times = [t for _, _, t in logger.trace]
+        axes[1].plot(times, values, label=logger.label, color=color, linewidth=1.8)
+
+    for ax, xlabel in zip(axes, ["Function Evaluations (NFEv)", "Wall Time (s)"]):
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("Best Objective Value (neg. performance)")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.4f"))
+
+    axes[0].set_title("Convergence vs. Budget")
+    axes[1].set_title("Convergence vs. Time")
+    fig.suptitle(title, fontsize=13, fontweight='bold')
+    plt.tight_layout()
+    plt.show()
+
+
+class TrackingObjective:
+    def __init__(self, fn, logger: ConvergenceLogger, perf_fn=None):
+        """
+        fn      : the objective the optimizer sees (e.g. penalized)
+        perf_fn : optional separate function for what gets logged (e.g. clean performance)
+                  If None, logs fn's return value directly.
+        """
+        self.fn = fn
+        self.perf_fn = perf_fn if perf_fn is not None else fn
+        self.logger = logger
+        self.nfev = 0
+        self.best_perf = np.inf   # tracks best logged value (perf_fn)
+        self.best_opt  = np.inf   # tracks best optimizer value (fn), for correctness
+
+    def __call__(self, x):
+        opt_val  = self.fn(x)           # penalized — returned to optimizer
+        perf_val = self.perf_fn(x)      # clean performance — logged only
+        self.nfev += 1
+
+        if opt_val < self.best_opt:     # improvement by optimizer's metric
+            self.best_opt = opt_val
+            elapsed = time.time() - self.logger._start
+            self.logger.trace.append((self.nfev, perf_val, elapsed))
+
+        return opt_val                  # optimizer always gets the penalized value
+
+    def reset(self):
+        self.nfev = 0
+        self.best_opt  = np.inf
+        self.best_perf = np.inf
+        self.logger.reset()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN OPTIMISER
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("Running Dual Annealing — penalty constraints …")
 
-    _convergence_history: List[float] = []
+    PATIENCE   = 50      # stop after this many callbacks with no improvement
+    TOLERANCE  = 0.0001  # minimum improvement to count as progress
     _best_so_far = [np.inf]
+    _no_improve_count = [0]
 
     def _sa_callback(x, f, context):
-        perf, _, _, _ = simulate_busso(x.copy(), params_busso)
-        objective = -perf[-1]
-        if objective < _best_so_far[0]:
-            _best_so_far[0] = objective
-        _convergence_history.append(_best_so_far[0])
+        if _best_so_far[0] - f > TOLERANCE:
+            _best_so_far[0] = f
+            _no_improve_count[0] = 0
+        else:
+            _no_improve_count[0] += 1
+
+        if _no_improve_count[0] >= PATIENCE:
+            print(f"Early stopping: no improvement > {TOLERANCE} for {PATIENCE} callbacks.")
+            return True  # signals dual_annealing to stop
+        return False
+    
+    sa_logger  = ConvergenceLogger(label="SA")
+    tracked_sa = TrackingObjective(
+        fn=busso_objective_penalty,
+        logger=sa_logger,
+        perf_fn=busso_objective,
+    )
 
     res_penalty = dual_annealing(
-        busso_objective_penalty,
+        tracked_sa,
         bounds=[(0, MAX_RUN_KM)] * n_days,
-        maxiter=100,
-        seed=42,
-        callback=_sa_callback,
+        maxiter=500,
+        seed=42
     )
+
+    sa_logger.trace.append((res_penalty.nfev, res_penalty.fun, time.time() - sa_logger._start))
 
     # ─────────────────────────────────────────────────────────────────────────────
     # RESULTS
@@ -168,9 +212,11 @@ if __name__ == "__main__":
     print_weekly_summary(loads_penalty)
     print_detailed_summary(loads_penalty)
 
-    save_all_plots(
-        loads_penalty, perf_penalty, g_penalty, h_penalty, k2_penalty,
-        _convergence_history, params_busso.k1,
-        label='Simulated Annealing', suffix='_sa', save_dir=output_dir,
-    )
-    plt.show()
+    plot_convergence([sa_logger], title="Simulated Annealing Convergence")
+
+    # save_all_plots(
+    #     loads_penalty, perf_penalty, g_penalty, h_penalty, k2_penalty,
+    #     [], params_busso.k1,
+    #     label='Simulated Annealing', suffix='_sa', save_dir=output_dir,
+    # )
+    # plt.show()

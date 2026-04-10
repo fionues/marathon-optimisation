@@ -153,7 +153,6 @@ def plot_convergence(
     if save_dir:
         plt.savefig(os.path.join(save_dir, f"convergence{suffix}.png"), dpi=150, bbox_inches='tight')
 
-
 def plot_k1_and_k2(
     loads: np.ndarray,
     k2: np.ndarray,

@@ -17,6 +17,27 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 output_dir = os.path.join(script_dir, 'output')
 os.makedirs(output_dir, exist_ok=True)
 
+from dataclasses import dataclass, field
+from typing import List, Tuple
+import time
+
+@dataclass
+class ConvergenceLogger:
+    """Records (nfev, best_value, elapsed_time) at each callback."""
+    label: str
+    trace: List[Tuple[int, float, float]] = field(default_factory=list)
+    _start: float = field(default_factory=time.time, init=False, repr=False)
+
+    def reset(self):
+        self.trace = []
+        self._start = time.time()
+
+    def best_values(self):
+        return [v for _, v, _ in self.trace]
+
+    def nfevs(self):
+        return [n for n, _, _ in self.trace]
+
 
 # ─────────────────────────────────────────────
 # HARD CONSTRAINTS (repair / projection) with taper caps
@@ -91,6 +112,53 @@ def de_objective(raw_loads: np.ndarray) -> float:
     perf, _, _, _ = simulate_busso(repaired_loads, params_busso)
     return -perf[-1]
 
+class TrackingObjective:
+    """Wraps an objective function, logging every call."""
+    def __init__(self, fn, logger: ConvergenceLogger):
+        self.fn = fn
+        self.logger = logger
+        self.nfev = 0
+        self.best = np.inf
+
+    def __call__(self, x):
+        val = self.fn(x)
+        self.nfev += 1
+        if val < self.best:
+            self.best = val
+            elapsed = time.time() - self.logger._start
+            self.logger.trace.append((self.nfev, val, elapsed))
+        return val
+
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+
+def plot_convergence(loggers: List[ConvergenceLogger], title="Convergence Curve"):
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    colors = {"SA": "#E07B39", "DE": "#3A7EBF"}
+
+    for logger in loggers:
+        nfevs  = logger.nfevs()
+        values = logger.best_values()
+        color  = colors.get(logger.label, "grey")
+
+        # Plot vs NFEv
+        axes[0].plot(nfevs, values, label=logger.label, color=color, linewidth=1.8)
+        # Plot vs time
+        times = [t for _, _, t in logger.trace]
+        axes[1].plot(times, values, label=logger.label, color=color, linewidth=1.8)
+
+    for ax, xlabel in zip(axes, ["Function Evaluations (NFEv)", "Wall Time (s)"]):
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("Best Objective Value (neg. performance)")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.4f"))
+
+    axes[0].set_title("Convergence vs. Budget")
+    axes[1].set_title("Convergence vs. Time")
+    fig.suptitle(title, fontsize=13, fontweight='bold')
+    plt.tight_layout()
+    plt.show()
 
 # ─────────────────────────────────────────────
 # RUN OPTIMISER
@@ -107,8 +175,11 @@ if __name__ == "__main__":
             _best_so_far[0] = current
         _convergence_history.append(_best_so_far[0])
 
+    de_logger  = ConvergenceLogger(label="DE")
+    tracked_de = TrackingObjective(de_objective, de_logger)
+
     result = differential_evolution(
-        de_objective,
+        tracked_de,
         bounds,
         strategy='best1bin',
         maxiter=1000,
@@ -117,6 +188,8 @@ if __name__ == "__main__":
         disp=True,
         callback=_de_callback,
     )
+
+    plot_convergence([de_logger], title="Differential Evolution Convergence")
 
     # ─────────────────────────────────────────────
     # RESULTS

@@ -44,7 +44,7 @@ os.makedirs(output_dir, exist_ok=True)
 # EXPERIMENT SETTINGS
 # ─────────────────────────────────────────────
 N_RUNS      = 5
-SA_MAXITER  = 50    # enough for convergence to be 0 without excessive runtime
+SA_MAXITER  = 1000    # enough for convergence to be 0 without excessive runtime
 DE_MAXITER  = 1000 # DE stops after tolerance is met, so this is a max cap rather than the max iterations
 DE_POPSIZE  = 15
 
@@ -96,11 +96,34 @@ def _sa_perf_fn(x, val):
     perf, _, _, _ = simulate_busso(repaired, params_busso)
     return perf[-1]
 
+_best_so_far = [np.inf]
+PATIENCE   = 50    # stop after this many callbacks with no improvement
+TOLERANCE  = 0.0001  # minimum improvement to count as progress
+_no_improve_count = [0]
+_last_best = [-np.inf]
+
+def _sa_callback(x, f, context):
+    perf, _, _, _ = simulate_busso(x.copy(), params_busso)
+    objective = -perf[-1]
+    if objective < _best_so_far[0]:
+        _best_so_far[0] = objective
+
+    if _best_so_far[0] - _last_best[0] > TOLERANCE:
+        _last_best[0] = _best_so_far[0]
+        _no_improve_count[0] = 0
+    else:
+        _no_improve_count[0] += 1
+
+    if _no_improve_count[0] >= PATIENCE:
+        print(f"Early stopping: no improvement > {TOLERANCE} for {PATIENCE} callbacks.")
+        return True  # signals dual_annealing to stop
+    return False
+
 
 def _run_sa() -> dict:
-    tracked = _make_tracked(busso_objective_penalty, perf_fn=_sa_perf_fn)
+    # tracked = _make_tracked(busso_objective_penalty, perf_fn=_sa_perf_fn)
     t0      = time.perf_counter()
-    res     = dual_annealing(tracked, bounds=sa_bounds, maxiter=SA_MAXITER)
+    res     = dual_annealing(busso_objective_penalty, bounds=sa_bounds, maxiter=SA_MAXITER, callback=_sa_callback)
     elapsed = time.perf_counter() - t0
 
     loads = res.x.copy()
@@ -114,20 +137,20 @@ def _run_sa() -> dict:
         "time":      elapsed,
         "nfev":      res.nfev,
         "nit":       res.nit,
-        "conv":      tracked.history,   # list of (nfev, best_perf)
+        # "conv":      tracked.history,   # list of (nfev, best_perf)
     }
 
 
 def _run_de() -> dict:
-    tracked = _make_tracked(de_objective)
+    # tracked = _make_tracked(de_objective)
     t0      = time.perf_counter()
     res     = differential_evolution(
-        tracked,
+        de_objective,
         de_bounds,
         strategy="best1bin",
         maxiter=DE_MAXITER,
         popsize=DE_POPSIZE,
-        tol=0.01,
+        tol=0.001,
     )
     elapsed = time.perf_counter() - t0
 
@@ -141,7 +164,7 @@ def _run_de() -> dict:
         "time":      elapsed,
         "nfev":      res.nfev,
         "nit":       res.nit,
-        "conv":      tracked.history,   # list of (nfev, best_perf)
+        # "conv":      tracked.history,   # list of (nfev, best_perf)
     }
 
 
@@ -308,48 +331,48 @@ def _plot_volume_comparison(sa_results: list, de_results: list) -> None:
     print(f"  Saved: {path}")
 
 
-def _plot_convergence(sa_results: list, de_results: list) -> None:
-    """Solution quality (race-day performance) vs cumulative function evaluations.
+# def _plot_convergence(sa_results: list, de_results: list) -> None:
+#     """Solution quality (race-day performance) vs cumulative function evaluations.
 
-    Each run is plotted as a thin line; the mean across runs is shown as a
-    thick line.  Both algorithms are overlaid on the same axes for direct
-    comparison.
-    """
-    fig, ax = plt.subplots(figsize=(9, 5))
+#     Each run is plotted as a thin line; the mean across runs is shown as a
+#     thick line.  Both algorithms are overlaid on the same axes for direct
+#     comparison.
+#     """
+#     fig, ax = plt.subplots(figsize=(9, 5))
 
-    for results, label, color in [
-        (sa_results, "Simulated Annealing", "steelblue"),
-        (de_results, "Differential Evolution", "darkorange"),
-    ]:
-        # Build a common nfev grid from 1 to the max nfev across all runs
-        max_nfev = max(r["conv"][-1][0] for r in results)
-        grid = np.linspace(1, max_nfev, 500)
+#     for results, label, color in [
+#         (sa_results, "Simulated Annealing", "steelblue"),
+#         (de_results, "Differential Evolution", "darkorange"),
+#     ]:
+#         # Build a common nfev grid from 1 to the max nfev across all runs
+#         max_nfev = max(r["conv"][-1][0] for r in results)
+#         grid = np.linspace(1, max_nfev, 500)
 
-        interp_curves = []
-        for r in results:
-            nfevs, perfs = zip(*r["conv"])
-            nfevs = np.array(nfevs, dtype=float)
-            perfs = np.array(perfs, dtype=float)
-            # Forward-fill: for each grid point take the best perf seen so far
-            interp = np.interp(grid, nfevs, perfs)
-            interp_curves.append(interp)
-            ax.plot(grid, interp, color=color, alpha=0.15, linewidth=0.8)
+#         interp_curves = []
+#         for r in results:
+#             nfevs, perfs = zip(*r["conv"])
+#             nfevs = np.array(nfevs, dtype=float)
+#             perfs = np.array(perfs, dtype=float)
+#             # Forward-fill: for each grid point take the best perf seen so far
+#             interp = np.interp(grid, nfevs, perfs)
+#             interp_curves.append(interp)
+#             ax.plot(grid, interp, color=color, alpha=0.15, linewidth=0.8)
 
-        mean_curve = np.mean(interp_curves, axis=0)
-        ax.plot(grid, mean_curve, color=color, linewidth=2.2, label=f"{label} (mean)")
+#         mean_curve = np.mean(interp_curves, axis=0)
+#         ax.plot(grid, mean_curve, color=color, linewidth=2.2, label=f"{label} (mean)")
 
-    ax.set_xlabel("Cumulative function evaluations")
-    ax.set_ylabel("Best race-day performance (AU)")
-    ax.set_title(
-        f"Convergence curves — solution quality vs function evaluations\n"
-        f"({N_RUNS} independent runs per algorithm; thin lines = individual runs)"
-    )
-    ax.legend()
-    ax.grid(alpha=0.3)
-    plt.tight_layout()
-    path = os.path.join(output_dir, "robustness_convergence.png")
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    print(f"  Saved: {path}")
+#     ax.set_xlabel("Cumulative function evaluations")
+#     ax.set_ylabel("Best race-day performance (AU)")
+#     ax.set_title(
+#         f"Convergence curves — solution quality vs function evaluations\n"
+#         f"({N_RUNS} independent runs per algorithm; thin lines = individual runs)"
+#     )
+#     ax.legend()
+#     ax.grid(alpha=0.3)
+#     plt.tight_layout()
+#     path = os.path.join(output_dir, "robustness_convergence.png")
+#     plt.savefig(path, dpi=150, bbox_inches="tight")
+#     print(f"  Saved: {path}")
 
 
 # ─────────────────────────────────────────────
