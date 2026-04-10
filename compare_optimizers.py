@@ -43,9 +43,9 @@ os.makedirs(output_dir, exist_ok=True)
 # ─────────────────────────────────────────────
 # EXPERIMENT SETTINGS
 # ─────────────────────────────────────────────
-N_RUNS      = 20
-SA_MAXITER  = 50    # enough to see convergence trends without excessive runtime
-DE_MAXITER  = 250   # for tractable comparison time
+N_RUNS      = 5
+SA_MAXITER  = 50    # enough for convergence to be 0 without excessive runtime
+DE_MAXITER  = 1000 # DE stops after tolerance is met, so this is a max cap rather than the max iterations
 DE_POPSIZE  = 15
 
 sa_bounds = [(0, MAX_RUN_KM)] * n_days
@@ -55,18 +55,31 @@ sa_bounds = [(0, MAX_RUN_KM)] * n_days
 # CONVERGENCE TRACKING WRAPPER
 # ─────────────────────────────────────────────
 
-def _make_tracked(fn):
-    """Wrap an objective so every call appends (nfev, best_perf) to .history."""
-    count  = [0]
-    best   = [np.inf]
-    history = []          # list of (cumulative_nfev, best_performance_so_far)
+def _make_tracked(fn, perf_fn=None):
+    """Wrap an objective so every call appends (nfev, best_perf) to .history.
+
+    perf_fn: optional callable(x, val) -> float that extracts the true
+    race-day performance from a candidate x and its objective value val.
+    When None (default), best performance is taken as -val, which is correct
+    for objectives of the form ``return -perf[-1]`` with no penalty term
+    (i.e. DE).  For SA, pass a perf_fn that re-simulates after repair so
+    that penalty terms do not contaminate the convergence curve.
+    """
+    count    = [0]
+    best_obj = [np.inf]
+    history  = []          # list of (cumulative_nfev, best_performance_so_far)
 
     def wrapper(x):
         val = fn(x)
         count[0] += 1
-        if val < best[0]:
-            best[0] = val
-        history.append((count[0], -best[0]))   # performance = -objective
+        if val < best_obj[0]:
+            best_obj[0] = val
+            best_perf = perf_fn(x, val) if perf_fn is not None else -val
+            history.append((count[0], best_perf))
+        elif history:
+            history.append((count[0], history[-1][1]))
+        else:
+            history.append((count[0], -np.inf))
         return val
 
     wrapper.history = history
@@ -77,8 +90,15 @@ def _make_tracked(fn):
 # SINGLE-RUN HELPERS
 # ─────────────────────────────────────────────
 
+def _sa_perf_fn(x, val):
+    """True race-day performance for an SA candidate (simulate after repair)."""
+    repaired = sa_repair(x.copy())
+    perf, _, _, _ = simulate_busso(repaired, params_busso)
+    return perf[-1]
+
+
 def _run_sa() -> dict:
-    tracked = _make_tracked(busso_objective_penalty)
+    tracked = _make_tracked(busso_objective_penalty, perf_fn=_sa_perf_fn)
     t0      = time.perf_counter()
     res     = dual_annealing(tracked, bounds=sa_bounds, maxiter=SA_MAXITER)
     elapsed = time.perf_counter() - t0
@@ -102,9 +122,12 @@ def _run_de() -> dict:
     tracked = _make_tracked(de_objective)
     t0      = time.perf_counter()
     res     = differential_evolution(
-        tracked, de_bounds,
-        strategy="best1bin", maxiter=DE_MAXITER,
-        popsize=DE_POPSIZE, tol=0.01,
+        tracked,
+        de_bounds,
+        strategy="best1bin",
+        maxiter=DE_MAXITER,
+        popsize=DE_POPSIZE,
+        tol=0.01,
     )
     elapsed = time.perf_counter() - t0
 
