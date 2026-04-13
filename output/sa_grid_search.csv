@@ -1,0 +1,2 @@
+initial_temp,restart_temp_ratio,visit,accept,mean_fun,std_fun,best_fun
+1000,1e-05,2.3,-10.0,-104.55903772419329,0.0,-104.55903772419329
