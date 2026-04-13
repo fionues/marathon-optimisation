@@ -19,7 +19,7 @@ os.makedirs(output_dir, exist_ok=True)
 PENALTY_WEIGHT = 1e4   # multiplier that converts constraint violations into cost
 
 INITIAL_TEMP       = 1000
-RESTART_TEMP_RATIO = 0.00001
+#RESTART_TEMP_RATIO = 0.00001
 VISIT              = 2.3
 ACCEPT             = -10.0
 
@@ -124,7 +124,6 @@ if __name__ == "__main__":
         seed=42,
         callback=_convergence_callback,
         initial_temp=INITIAL_TEMP,
-        restart_temp_ratio=RESTART_TEMP_RATIO,
         visit=VISIT,
         accept=ACCEPT,
     )

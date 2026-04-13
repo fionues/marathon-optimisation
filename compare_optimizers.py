@@ -35,7 +35,12 @@ from optimize_de import (
     apply_all_constraints as de_repair,
     bounds as de_bounds,
 )
-from optimize_sa import busso_objective_penalty
+from optimize_sa import (
+    busso_objective_penalty,
+    INITIAL_TEMP,
+    VISIT,
+    ACCEPT
+)
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 output_dir = os.path.join(script_dir, "output")
@@ -116,7 +121,15 @@ def _run_sa() -> dict:
         fn=busso_objective_penalty,
         perf_fn=_sa_perf_fn,
     )
-    res = dual_annealing(tracked_sa, bounds=sa_bounds, maxiter=SA_MAXITER, callback=_stopping_callback())
+    res = dual_annealing(
+        tracked_sa,
+        bounds=sa_bounds,
+        maxiter=SA_MAXITER,
+        callback=_stopping_callback(),
+        initial_temp=INITIAL_TEMP,
+        visit=VISIT,
+        accept=ACCEPT,
+    )
     sa_nfevs, sa_perfs, _ = get_sa_trace()
     t0      = time.perf_counter()
     elapsed = time.perf_counter() - t0
