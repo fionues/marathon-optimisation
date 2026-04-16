@@ -1,11 +1,8 @@
 """
 compare_optimizers.py
 =====================
-Compare robustness and wall-clock time between Differential Evolution (DE)
+Compare robustness and efficiency between Differential Evolution (DE)
 and Simulated Annealing (SA) on the Busso marathon-training optimisation.
-
-Objective functions and repair heuristics are imported directly from
-optimize_de.py and optimize_sa.py so there is no duplication.
 
 For each algorithm, N_RUNS independent runs are performed with no fixed
 seeds (fresh OS randomness every run).  The following metrics are collected:
@@ -13,7 +10,6 @@ seeds (fresh OS randomness every run).  The following metrics are collected:
   - race-day performance (AU)
   - total plan volume (km)
   - peak weekly volume (km)
-  - wall-clock time (s)
   - number of function evaluations (nfev)
 
 Summary statistics (mean, std, min, max) are printed and four plots are saved.
@@ -216,7 +212,6 @@ def _plot_boxplots(sa_results: list, de_results: list) -> None:
     metrics = [
         ("perf",      "Race-day performance (AU)"),
         ("dist",      "Total training volume (km)"),
-        ("time",      "Wall-clock time (s)"),
         ("nfev",      "Function evaluations"),
     ]
     fig, axes = plt.subplots(1, len(metrics), figsize=(4 * len(metrics), 5))
