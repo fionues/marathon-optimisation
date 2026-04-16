@@ -17,7 +17,6 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 output_dir = os.path.join(script_dir, 'output')
 os.makedirs(output_dir, exist_ok=True)
 
-
 # ─────────────────────────────────────────────
 # HARD CONSTRAINTS (repair / projection) with taper caps
 # ─────────────────────────────────────────────
@@ -90,7 +89,6 @@ def de_objective(raw_loads: np.ndarray) -> float:
     repaired_loads = apply_all_constraints(raw_loads.copy())
     perf, _, _, _ = simulate_busso(repaired_loads, params_busso)
     return -perf[-1]
-
 
 # ─────────────────────────────────────────────
 # RUN OPTIMISER

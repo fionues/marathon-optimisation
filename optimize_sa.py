@@ -1,11 +1,11 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import List
 from scipy.optimize import dual_annealing
+from typing import List
 
 from busso_model import (
-    simulate_busso, params_busso, n_days,
+    simulate_busso, params_busso, n_days, busso_objective,
     RAMP_RATE, FIRST_WEEK_KM, LONG_RUN_KM, MAX_RUN_KM, MARATHON_KM,
 )
 from plots import (
@@ -18,63 +18,13 @@ output_dir     = os.path.join(script_dir, 'output')
 os.makedirs(output_dir, exist_ok=True)
 PENALTY_WEIGHT = 1e4   # multiplier that converts constraint violations into cost
 
+INITIAL_TEMP       = 1000
+#RESTART_TEMP_RATIO = 0.00001
+VISIT              = 2.3
+ACCEPT             = -10.0
 
 # ─────────────────────────────────────────────────────────────────────────────
-# APPROACH A — HARD CONSTRAINTS  (repair / projection)
-# Each candidate solution is projected onto the feasible region before the
-# model is evaluated.  The optimizer never sees an infeasible point.
-# ─────────────────────────────────────────────────────────────────────────────
-def apply_all_constraints(loads: np.ndarray) -> np.ndarray:
-    """Projects a candidate load vector onto the feasible region."""
-    loads = np.maximum(0, loads)                       # non-negative loads
-
-    # At least one rest day (0 km) per week
-    for w in range(len(loads) // 7):
-        min_day_idx = np.argmin(loads[w*7:(w+1)*7])
-        loads[w*7 + min_day_idx] = 0.0
-
-    # First week anchored to FIRST_WEEK_KM
-    first_week_sum = loads[:7].sum()
-    if first_week_sum > 0:
-        loads[:7] *= (FIRST_WEEK_KM / first_week_sum)
-    else:
-        loads[:7] = FIRST_WEEK_KM / 6.0
-        loads[np.argmin(loads[:7])] = 0.0
-
-    # Max 10 % ramp rate per week
-    for w in range(1, len(loads) // 7):
-        prev_sum = loads[(w-1)*7 : w*7].sum()
-        curr_sum = loads[w*7 : (w+1)*7].sum()
-        if curr_sum > prev_sum * (1 + RAMP_RATE):
-            scale = (prev_sum * (1 + RAMP_RATE)) / curr_sum if curr_sum > 0 else 0
-            loads[w*7 : (w+1)*7] *= scale
-
-    # At least one run of exactly LONG_RUN_KM (boost the busiest day if needed)
-    max_day_idx = np.argmax(loads)
-    if loads[max_day_idx] < LONG_RUN_KM:
-        loads[max_day_idx] = LONG_RUN_KM
-
-    # No single run above MAX_RUN_KM
-    loads = np.minimum(loads, MAX_RUN_KM)
-
-    # No load in the open interval (0, 5): snap to 0 if < 2.5, else to 5
-    loads = np.where((loads > 0) & (loads < 5), np.where(loads < 2.5, 0.0, 5.0), loads)
-
-    # Race day
-    loads[-1] = MARATHON_KM
-
-    return loads
-
-
-def busso_objective_hard(loads: np.ndarray) -> float:
-    """Repair → simulate → return negative race-day performance."""
-    loads = apply_all_constraints(loads.copy())
-    perf, _, _, _ = simulate_busso(loads, params_busso)
-    return -perf[-1]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# APPROACH B — PENALTY CONSTRAINTS
+# PENALTY CONSTRAINTS
 # Infeasible solutions are allowed but penalised.
 # ─────────────────────────────────────────────────────────────────────────────
 def busso_objective_penalty(loads: np.ndarray) -> float:
@@ -123,6 +73,19 @@ def busso_objective_penalty(loads: np.ndarray) -> float:
 
     return objective + PENALTY_WEIGHT * penalty
 
+def run_sa(initial_temp, restart_temp_ratio, visit, accept, seed):
+    print(f"Running Dual Annealing with initial_temp={initial_temp:.1f}, restart_temp_ratio={restart_temp_ratio:.1e}, visit={visit:.2f}, accept={accept:.2f}, seed={seed} …")
+    res = dual_annealing(
+        busso_objective_penalty,
+        bounds=[(0, MAX_RUN_KM)] * n_days,
+        maxiter=100,
+        seed=seed,
+        initial_temp=initial_temp,
+        restart_temp_ratio=restart_temp_ratio,
+        visit=visit,
+        accept=accept,
+    )
+    return res.fun, res.nfev
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN OPTIMISER
@@ -130,14 +93,28 @@ def busso_objective_penalty(loads: np.ndarray) -> float:
 if __name__ == "__main__":
     print("Running Dual Annealing — penalty constraints …")
 
-    _convergence_history: List[float] = []
+    PATIENCE   = 50      # stop after this many callbacks with no improvement
+    TOLERANCE  = 0.0001  # minimum improvement to count as progress
     _best_so_far = [np.inf]
+    _no_improve_count = [0]
 
-    def _sa_callback(x, f, context):
-        perf, _, _, _ = simulate_busso(x.copy(), params_busso)
-        objective = -perf[-1]
-        if objective < _best_so_far[0]:
-            _best_so_far[0] = objective
+    def _stopping_callback(x, f, context):
+        if _best_so_far[0] - f > TOLERANCE:
+            _best_so_far[0] = f
+            _no_improve_count[0] = 0
+        else:
+            _no_improve_count[0] += 1
+
+        if _no_improve_count[0] >= PATIENCE:
+            print(f"Early stopping: no improvement > {TOLERANCE} for {PATIENCE} callbacks.")
+            return True  # signals dual_annealing to stop
+        return False
+    
+    _convergence_history: List[float] = []
+
+    def _convergence_callback(x, f, context):
+        if f < _best_so_far[0]:
+            _best_so_far[0] = f
         _convergence_history.append(_best_so_far[0])
 
     res_penalty = dual_annealing(
@@ -145,7 +122,10 @@ if __name__ == "__main__":
         bounds=[(0, MAX_RUN_KM)] * n_days,
         maxiter=100,
         seed=42,
-        callback=_sa_callback,
+        callback=_convergence_callback,
+        initial_temp=INITIAL_TEMP,
+        visit=VISIT,
+        accept=ACCEPT,
     )
 
     # ─────────────────────────────────────────────────────────────────────────────
@@ -174,3 +154,89 @@ if __name__ == "__main__":
         label='Simulated Annealing', suffix='_sa', save_dir=output_dir,
     )
     plt.show()
+
+
+# ─────────────────────────────────────────────
+# Find best parameters for SA with random search
+# ─────────────────────────────────────────────
+from scipy.stats import loguniform, uniform
+import pandas as pd
+
+# N_SEEDS = 2  # 5
+
+# N_TRIALS = 5 # 50
+# rng = np.random.default_rng(0)
+
+# results = []
+
+# # Run defaults for comparison 
+# DEFAULT_PARAMS = {
+#     "initial_temp":       5230,
+#     "restart_temp_ratio": 2e-5,
+#     "visit":              2.62,
+#     "accept":             -5.0,
+# }
+
+# finals = [run_sa(**DEFAULT_PARAMS, seed=s) for s in range(N_SEEDS)]
+# fun_vals = [f for f, _ in finals]
+# results.append({
+#     **DEFAULT_PARAMS,
+#     "label":    "default",
+#     "mean_fun": np.mean(fun_vals),
+#     "std_fun":  np.std(fun_vals),
+# })
+
+# # Run random search 
+# for _ in range(N_TRIALS):
+#     params = {
+#         "initial_temp":       10 ** rng.uniform(2, 5),     # 100 – 100000
+#         "restart_temp_ratio": 10 ** rng.uniform(-6, -3),   # 1e-6 – 1e-3
+#         "visit":              rng.uniform(1.5, 2.99),      # must be < 3
+#         "accept":             rng.uniform(-15, -0.5),
+#     }
+#     finals = [run_sa(**params, seed=s) for s in range(N_SEEDS)]
+#     fun_vals = [f for f, _ in finals]
+#     results.append({**params, "mean_fun": np.mean(fun_vals), "std_fun": np.std(fun_vals)})
+
+# df = pd.DataFrame(results).sort_values("mean_fun")
+# print(df.head(10).to_string(index=False))
+
+
+# ─────────────────────────────────────────────
+# Find best parameters for SA with grid search
+# ─────────────────────────────────────────────
+# from itertools import product
+
+# param_grid = {
+#     "initial_temp":       [1000, 5230, 15000], # best 1000
+#     "restart_temp_ratio": [1e-5, 2e-5, 1e-4],  # best 0.00001
+#     "visit":              [2.3, 2.62, 2.9],    # best 2.3
+#     "accept":             [-10.0, -5.0, -1.0], # best -10
+# }
+# N_SEEDS = 5  # more seeds = more reliable, but slower
+
+# results = []
+# combos  = list(product(*param_grid.values()))
+# print(f"Total runs: {len(combos) * N_SEEDS}")
+
+# for initial_temp, restart_temp_ratio, visit, accept in combos:
+#     finals = [
+#         run_sa(initial_temp, restart_temp_ratio, visit, accept, seed)
+#         for seed in range(N_SEEDS)
+#     ]
+#     fun_vals = [f for f, _ in finals]
+#     results.append({
+#         "initial_temp":       initial_temp,
+#         "restart_temp_ratio": restart_temp_ratio,
+#         "visit":              visit,
+#         "accept":             accept,
+#         "mean_fun":           np.mean(fun_vals),
+#         "std_fun":            np.std(fun_vals),
+#         "best_fun":           np.min(fun_vals),
+#     })
+
+# df = pd.DataFrame(results).sort_values("mean_fun")
+# csv_path = os.path.join(output_dir, "sa_grid_search.csv")
+# df.to_csv(csv_path, index=False)
+# print(f"Results saved to {csv_path}")
+# print(df.head(10).to_string(index=False))
